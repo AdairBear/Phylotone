@@ -26,6 +26,21 @@
   - Known limit: M0 timing uses a 1 ms sleep loop, so jitter is a few ms or
     worse (Windows default timer resolution is ~15 ms). The audio-driven clock
     is M1 work.
+- M1 in progress (branch `m1-scene`):
+  - Done: scene language first cut (`core/include/phylo/Scene.h`): tempo, meter,
+    key (stored, not used yet), patterns with note names, sections (parsed and
+    validated, not played), `play` for the active pattern. Parse errors carry
+    line numbers and every error is reported.
+  - Done: pattern changes scheduled to the next bar (`Sequencer::scheduleNextBar`).
+    The block is split at the bar line, so the new pattern starts exactly on the bar.
+  - Done: the app watches `Documents/Phylotone/scene.phy` and reloads it on change.
+    A change to the pattern lands on the next bar while playing.
+  - Core tests: 28, passing under g++ and ASan/UBSan.
+  - Not verified: the audible M1 check. The sandbox has no MIDI device.
+  - Decision made without you: scene syntax is our own (see Scene.h header), not
+    Strata-like. CONTRACT.md lists this as open; change it if you want Strata.
+  - Known limits: sections are not played (M6). Key is not used (M3). Bar timing
+    is exact in the core but MIDI send timing is still the 1 ms loop.
 - Open decisions are listed at the end of CONTRACT.md.
 
 ## Next
@@ -50,3 +65,4 @@
   block. Block-size independence is now tested for sizes 1 to 96000.
 - 2026-10-07: M0 core merged (PR #1). M0 app shell and CI on `m0-app-shell`.
   Known limits are listed under "Where we are".
+- 2026-10-07: M1 first cut on `m1-scene`: scene parser, next-bar pattern changes, scene file watch.

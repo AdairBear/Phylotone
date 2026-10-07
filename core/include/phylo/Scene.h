@@ -1,0 +1,97 @@
+// Scene language, first cut (M1). Line-based, JUCE-free.
+//
+// Example:
+//
+//   tempo 120           // BPM, 20 to 300
+//   meter 4             // beats per bar, 1 to 16
+//   key C minor         // parsed and stored; not used for generation yet
+//   play bass           // the pattern the track plays
+//
+//   pattern bass 4      // name, length in beats
+//     0    C2 100 0.5   // beat, note (number or name), velocity, duration in beats
+//     2    G2  90 0.5
+//
+//   section intro 8     // name, length in bars
+//     play bass
+//
+// Comments start with //. Indented lines belong to the block above them.
+// Sections are parsed and validated; arrangement playback is M6.
+
+#pragma once
+
+#include "phylo/Sequencer.h"
+
+#include <string>
+#include <vector>
+
+namespace phylo
+{
+
+struct SceneNote
+{
+    double beat = 0.0;
+    int note = 60;
+    int velocity = 100;
+    double duration = 1.0;
+};
+
+struct ScenePattern
+{
+    std::string name;
+    double lengthBeats = 4.0;
+    int line = 0;
+    std::vector<SceneNote> notes;
+};
+
+struct SceneSection
+{
+    std::string name;
+    int bars = 4;
+    int line = 0;
+    std::vector<std::string> play;
+    std::vector<int> playLines; // line of each `play`, same order as `play`
+};
+
+struct SceneError
+{
+    int line = 0; // 1-based
+    std::string message;
+};
+
+struct Scene
+{
+    double tempo = 120.0;
+    int meter = 4;
+    bool hasKey = false;
+    std::string keyRoot;   // e.g. "C", "F#", "Bb"
+    bool keyMinor = false;
+    std::string activePattern; // from `play <name>` at top level
+    std::vector<ScenePattern> patterns;
+    std::vector<SceneSection> sections;
+
+    const ScenePattern* findPattern(const std::string& name) const;
+};
+
+struct ParseResult
+{
+    Scene scene;
+    std::vector<SceneError> errors;
+
+    bool ok() const noexcept { return errors.empty(); }
+};
+
+// Parses scene text. Reports every error it finds, each with its line number.
+// On error the scene may be partial, so callers should check ok() first.
+ParseResult parseScene(const std::string& text);
+
+// Builds a playable pattern from a parsed pattern.
+Pattern buildPattern(const ScenePattern& p);
+
+// True if two patterns have the same length and the same notes, in the same order.
+bool samePattern(const ScenePattern& a, const ScenePattern& b);
+
+// Parses a note name ("C4", "F#3", "Bb-1") or a MIDI number ("64") into 0..127.
+// Returns false if the token is not a valid note.
+bool parseNoteToken(const std::string& token, int& midi);
+
+} // namespace phylo

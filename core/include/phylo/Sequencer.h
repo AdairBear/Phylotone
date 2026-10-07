@@ -1,10 +1,14 @@
-// Phylotone core: JUCE-free sequencing for M0.
+// Phylotone core: JUCE-free sequencing for M0 and M1.
 //
 // The sequencer is driven by an integer frame counter. Every event's absolute
 // frame is computed from its beat position, and each block emits only the
 // events whose frame falls in the half-open window [position, position + n).
 // Because the window is half-open and integer-based, an event is emitted once
 // and only once, whatever the block size.
+//
+// A pattern change can be scheduled with scheduleNextBar(). It takes effect at
+// the next bar line, splitting the block there, so the new pattern starts
+// exactly on the bar with no gap or repeated events.
 
 #pragma once
 
@@ -64,15 +68,26 @@ public:
     void setSampleRate(double sr) noexcept { sampleRate = sr; }
     double getSampleRate() const noexcept { return sampleRate; }
 
-    void setPattern(Pattern p) { pattern = std::move(p); }
+    // Beats per bar. Bar lines fall every `beats` beats. Minimum 1.
+    void setMeter(int beatsPerBar) noexcept { meterBeats = beatsPerBar > 0 ? beatsPerBar : 1; }
+    int meter() const noexcept { return meterBeats; }
+
+    // Replaces the pattern immediately. Its beat 0 lands on the current playhead.
+    void setPattern(Pattern p);
     const Pattern& getPattern() const noexcept { return pattern; }
+
+    // Schedules a pattern to replace the current one at the next bar line.
+    // A second call before the bar replaces the first.
+    void scheduleNextBar(Pattern p);
+    bool hasPendingPattern() const noexcept { return hasPending; }
+    std::int64_t pendingSwitchFrame() const noexcept { return switchFrame; }
 
     void play() noexcept { playing = true; }
     void stop() noexcept { playing = false; }
     bool isPlaying() const noexcept { return playing; }
 
-    // Resets the playhead to the start of the pattern.
-    void rewind() noexcept { position = 0; }
+    // Resets the playhead to the start of the pattern. Drops any scheduled change.
+    void rewind() noexcept;
 
     // Current playhead in frames since play started, and in beats.
     std::int64_t positionFrames() const noexcept { return position; }
@@ -85,10 +100,21 @@ public:
     // Frames per beat at the current tempo and sample rate.
     double framesPerBeat() const noexcept;
 
+    // Frames per bar at the current tempo, sample rate and meter.
+    double framesPerBar() const noexcept;
+
 private:
+    void emitRange(std::int64_t from, std::int64_t to, std::int64_t blockStart,
+                   std::vector<MidiOut>& out) const;
+
     Pattern pattern;
+    Pattern pending;
+    bool hasPending = false;
+    std::int64_t switchFrame = 0;     // frame at which `pending` takes over
+    std::int64_t patternOrigin = 0;   // frame of beat 0 of the current pattern
     double tempoBpm = 120.0;
     double sampleRate = 48000.0;
+    int meterBeats = 4;
     bool playing = false;
     std::int64_t position = 0; // frames since rewind, not wrapped
 };

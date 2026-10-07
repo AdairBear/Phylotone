@@ -3,6 +3,7 @@
 // Each TEST registers a function. main() runs them all, prints failures, and
 // returns non-zero if any check failed, so ctest picks it up.
 
+#include "phylo/Scene.h"
 #include "phylo/Sequencer.h"
 
 #include <algorithm>
@@ -395,6 +396,281 @@ TEST(retrigger_ordering_holds_inside_one_block)
     {
         CHECK_EQ(statuses[0], 0x80);
         CHECK_EQ(statuses[1], 0x90);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Scheduled pattern changes (M1)
+
+namespace
+{
+bool hasErrorAt(const phylo::ParseResult& r, int line)
+{
+    for (const auto& e : r.errors)
+        if (e.line == line)
+            return true;
+    return false;
+}
+
+std::vector<Absolute> sortedRender(int blockSize, std::int64_t frames, bool scheduleAt50k)
+{
+    phylo::Pattern a(4.0);
+    a.addNote(0.0, 60, 100, 0.5);
+    phylo::Pattern b(4.0);
+    b.addNote(0.0, 62, 100, 0.5);
+
+    auto s = makeSequencer(120.0, 48000.0, a);
+    s.play();
+    std::vector<Absolute> all = render(s, 50000, blockSize);
+    if (scheduleAt50k)
+        s.scheduleNextBar(b);
+    auto rest = render(s, frames - 50000, blockSize);
+    all.insert(all.end(), rest.begin(), rest.end());
+    std::sort(all.begin(), all.end());
+    return all;
+}
+} // namespace
+
+TEST(meter_sets_bar_length)
+{
+    phylo::Sequencer s;
+    s.setTempo(120.0);
+    s.setSampleRate(48000.0);
+    s.setMeter(3);
+    CHECK_EQ(s.meter(), 3);
+    CHECK(std::abs(s.framesPerBar() - 72000.0) < 1e-9);
+}
+
+TEST(scheduled_pattern_starts_on_next_bar)
+{
+    // Bar = 4 beats = 96000 frames at 120 bpm, 48 kHz.
+    phylo::Pattern a(4.0);
+    a.addNote(0.0, 60, 100, 0.5);
+    phylo::Pattern b(4.0);
+    b.addNote(0.0, 62, 100, 0.5);
+
+    auto s = makeSequencer(120.0, 48000.0, a);
+    s.play();
+    render(s, 50000, 512); // mid first bar
+
+    s.scheduleNextBar(b);
+    CHECK(s.hasPendingPattern());
+    CHECK_EQ(s.pendingSwitchFrame(), 96000);
+
+    const auto msgs = render(s, 150000, 512); // 50000 .. 200000
+
+    std::int64_t firstNew = -1;
+    bool oldAfterSwitch = false;
+    for (const auto& m : msgs)
+    {
+        if (m.note == 62 && m.status == 0x90 && firstNew < 0)
+            firstNew = m.frame;
+        if (m.note == 60 && m.status == 0x90 && m.frame >= 96000)
+            oldAfterSwitch = true;
+    }
+    CHECK_EQ(firstNew, 96000);
+    CHECK(!oldAfterSwitch);
+    CHECK(!s.hasPendingPattern());
+}
+
+TEST(scheduled_pattern_at_exact_bar_moves_to_following_bar)
+{
+    phylo::Pattern a(4.0);
+    a.addNote(0.0, 60, 100, 0.5);
+    phylo::Pattern b(4.0);
+    b.addNote(0.0, 62, 100, 0.5);
+
+    auto s = makeSequencer(120.0, 48000.0, a);
+    s.play();
+    render(s, 96000, 512); // playhead now sits on a bar line
+
+    s.scheduleNextBar(b);
+    CHECK_EQ(s.pendingSwitchFrame(), 192000);
+}
+
+TEST(scheduled_change_is_block_size_independent)
+{
+    const auto reference = sortedRender(4096, 300000, true);
+    CHECK(!reference.empty());
+    for (int block : {1, 7, 512, 150000})
+    {
+        const auto got = sortedRender(block, 300000, true);
+        if (!(got == reference))
+            std::printf("  FAIL [%s] block size %d differs from reference\n", gCurrent, block);
+        CHECK(got == reference);
+    }
+}
+
+TEST(rewind_drops_scheduled_change)
+{
+    phylo::Pattern a(4.0);
+    a.addNote(0.0, 60, 100, 0.5);
+    auto s = makeSequencer(120.0, 48000.0, a);
+    s.play();
+    render(s, 1000, 256);
+    s.scheduleNextBar(phylo::Pattern(4.0));
+    s.rewind();
+    CHECK(!s.hasPendingPattern());
+}
+
+TEST(empty_pattern_still_advances_the_clock)
+{
+    phylo::Pattern empty(4.0);
+    auto s = makeSequencer(120.0, 48000.0, empty);
+    s.play();
+    render(s, 1000, 256);
+    CHECK_EQ(s.positionFrames(), 1000);
+}
+
+// ---------------------------------------------------------------------------
+// Scene language (M1)
+
+TEST(scene_parses_a_valid_file)
+{
+    const std::string text =
+        "tempo 96\n"
+        "meter 3\n"
+        "key F# minor\n"
+        "play bass\n"
+        "// a comment line\n"
+        "\n"
+        "pattern bass 4\n"
+        "  0    C2 100 0.5   // trailing comment\n"
+        "  2.5  Bb2 90 1\n"
+        "pattern lead 2\n"
+        "  0 64 80 0.25\n"
+        "section intro 8\n"
+        "  play bass\n";
+    const auto r = phylo::parseScene(text);
+    CHECK(r.ok());
+    CHECK(std::abs(r.scene.tempo - 96.0) < 1e-9);
+    CHECK_EQ(r.scene.meter, 3);
+    CHECK(r.scene.hasKey);
+    CHECK(r.scene.keyRoot == "F#");
+    CHECK(r.scene.keyMinor);
+    CHECK(r.scene.activePattern == "bass");
+    CHECK_EQ(r.scene.patterns.size(), 2u);
+    CHECK_EQ(r.scene.sections.size(), 1u);
+    if (r.scene.patterns.size() == 2 && r.scene.patterns[0].notes.size() == 2)
+    {
+        CHECK_EQ(r.scene.patterns[0].notes[0].note, 36); // C2
+        CHECK_EQ(r.scene.patterns[0].notes[1].note, 46); // Bb2
+        CHECK(std::abs(r.scene.patterns[0].notes[1].beat - 2.5) < 1e-9);
+        CHECK_EQ(r.scene.patterns[1].notes[0].note, 64);
+    }
+    if (r.scene.sections.size() == 1)
+    {
+        CHECK_EQ(r.scene.sections[0].bars, 8);
+        CHECK_EQ(r.scene.sections[0].play.size(), 1u);
+    }
+}
+
+TEST(scene_empty_or_comment_only_is_valid)
+{
+    const auto r = phylo::parseScene("\n\n// nothing here\n");
+    CHECK(r.ok());
+    CHECK_EQ(r.scene.patterns.size(), 0u);
+}
+
+TEST(note_names_map_to_midi_numbers)
+{
+    struct Case { const char* token; int midi; };
+    const Case valid[] = {
+        {"C4", 60}, {"A4", 69}, {"C-1", 0}, {"G9", 127}, {"Bb-1", 10},
+        {"F#3", 54}, {"Cb4", 59}, {"64", 64}, {"0", 0}, {"127", 127},
+    };
+    for (const auto& c : valid)
+    {
+        int m = -1;
+        const bool okParse = phylo::parseNoteToken(c.token, m);
+        if (!okParse || m != c.midi)
+            std::printf("  FAIL [%s] %s -> %d (ok=%d), want %d\n", gCurrent, c.token, m, okParse ? 1 : 0, c.midi);
+        CHECK(okParse && m == c.midi);
+    }
+
+    const char* invalid[] = {"H4", "C10", "C#-2", "128", "", "C", "c4", "C4x"};
+    for (const char* t : invalid)
+    {
+        int m = 0;
+        if (phylo::parseNoteToken(t, m))
+            std::printf("  FAIL [%s] %s should be invalid\n", gCurrent, t);
+        CHECK(!phylo::parseNoteToken(t, m));
+    }
+}
+
+TEST(parse_errors_report_line_numbers)
+{
+    const std::string text =
+        "tempo 500\n"           // 1: out of range
+        "meter 4\n"             // 2
+        "pattern bass 4\n"      // 3
+        "  0 C2 100 0.5\n"      // 4
+        "  4 C2 100 0.5\n"      // 5: beat outside pattern
+        "  1 C2 0 0.5\n"        // 6: velocity 0
+        "  2 H2 100 0.5\n"      // 7: not a note
+        "wobble\n"              // 8: unknown directive
+        "  stray\n";            // 9: indented outside any block
+    const auto r = phylo::parseScene(text);
+    CHECK(!r.ok());
+    for (int line : {1, 5, 6, 7, 8, 9})
+    {
+        if (!hasErrorAt(r, line))
+            std::printf("  FAIL [%s] expected an error on line %d\n", gCurrent, line);
+        CHECK(hasErrorAt(r, line));
+    }
+    CHECK(!hasErrorAt(r, 2));
+    CHECK(!hasErrorAt(r, 4));
+}
+
+TEST(unknown_pattern_references_are_reported)
+{
+    const std::string text =
+        "pattern a 4\n"        // 1
+        "  0 C2 100 1\n"       // 2
+        "section s 2\n"        // 3
+        "  play nope\n"        // 4
+        "play missing\n";      // 5
+    const auto r = phylo::parseScene(text);
+    CHECK(!r.ok());
+    CHECK(hasErrorAt(r, 4));
+    CHECK(hasErrorAt(r, 5));
+}
+
+TEST(duplicate_pattern_names_are_reported)
+{
+    const auto r = phylo::parseScene("pattern a 4\npattern a 2\n");
+    CHECK(!r.ok());
+    CHECK(hasErrorAt(r, 2));
+}
+
+TEST(same_pattern_compares_content)
+{
+    const auto a = phylo::parseScene("pattern p 4\n  0 C4 100 0.5\n");
+    const auto b = phylo::parseScene("pattern q 4\n  0 C4 100 0.5\n");
+    const auto c = phylo::parseScene("pattern p 4\n  0 C4 100 0.6\n");
+    CHECK(a.ok() && b.ok() && c.ok());
+    if (a.ok() && b.ok() && c.ok())
+    {
+        CHECK(phylo::samePattern(a.scene.patterns[0], b.scene.patterns[0]) == true);
+        CHECK(phylo::samePattern(a.scene.patterns[0], c.scene.patterns[0]) == false);
+    }
+}
+
+TEST(parsed_pattern_plays_through_the_sequencer)
+{
+    const auto r = phylo::parseScene("pattern p 4\n  0 C4 100 0.5\n");
+    CHECK(r.ok());
+    if (r.ok() && r.scene.patterns.size() == 1)
+    {
+        auto s = makeSequencer(120.0, 48000.0, phylo::buildPattern(r.scene.patterns[0]));
+        s.play();
+        const auto msgs = render(s, 96000, 1024);
+        CHECK_EQ(msgs.size(), 2u);
+        if (msgs.size() == 2)
+        {
+            CHECK_EQ(msgs[0].note, 60);
+            CHECK_EQ(msgs[1].frame, 12000);
+        }
     }
 }
 
