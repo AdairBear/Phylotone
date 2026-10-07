@@ -10,13 +10,19 @@
 
 ## Where we are
 - Contract drafted (v0.1). Milestones drafted. Assistant spec drafted.
-- No code yet.
+- M0 in progress (branch `m0-skeleton`):
+  - Done: JUCE-free core sequencer (`core/`): Pattern, Sequencer, integer-frame
+    timing. 14 core tests in `tests/core/`, passing under g++ and under
+    ASan/UBSan. Build with `cmake -S . -B build && cmake --build build && ctest --test-dir build`.
+  - Not done: JUCE Standalone app shell (play/stop, MIDI out), CI on
+    macOS/Windows/Linux, and a clean-checkout build on all three platforms.
 - Open decisions are listed at the end of CONTRACT.md.
 
 ## Next
 1. Thomas reviews and edits CONTRACT.md.
 2. Settle the open decisions that block M0 (name, plugin hosting approach).
-3. Start M0.
+3. Finish M0: app shell with play/stop and MIDI out, then CI on all three platforms.
+4. M0 hardening pass, then a note here.
 
 ## Working rules
 - New work goes on a branch with a pull request. Thomas reviews and merges.
@@ -28,3 +34,7 @@
 ## Session log
 - 2026-10-07: Contract, milestones and assistant spec drafted in `docs/`.
 - 2026-10-07: Working name set to Phylotone as a placeholder. Naming to be revisited in a dedicated session.
+- 2026-10-07: M0 core sequencer built with tests. Found and fixed a bug: when the
+  loop length in frames is not an integer, events at a loop boundary could be
+  dropped depending on block size. Fixed by checking one loop either side of each
+  block. Block-size independence is now tested for sizes 1 to 96000.
