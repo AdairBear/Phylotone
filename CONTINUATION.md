@@ -14,8 +14,18 @@
   - Done: JUCE-free core sequencer (`core/`): Pattern, Sequencer, integer-frame
     timing. 14 core tests in `tests/core/`, passing under g++ and under
     ASan/UBSan. Build with `cmake -S . -B build && cmake --build build && ctest --test-dir build`.
-  - Not done: JUCE Standalone app shell (play/stop, MIDI out), CI on
-    macOS/Windows/Linux, and a clean-checkout build on all three platforms.
+  - Done (branch `m0-app-shell`): JUCE 8.0.9 Standalone app (`app/`) with
+    play, stop, tempo, MIDI output picker, and a looping C major arpeggio.
+    Build: `cmake -S . -B build -DPHYLO_BUILD_APP=ON`. Verified to build and
+    launch under Xvfb on Linux.
+  - Done: CI workflow (`.github/workflows/ci.yml`) for Ubuntu, macOS and
+    Windows: builds core and app, runs core tests.
+  - Not verified yet: audible MIDI output. This sandbox has no ALSA sequencer,
+    so no MIDI device was available. The send path has not run here, and the
+    CI runs have not been observed.
+  - Known limit: M0 timing uses a 1 ms sleep loop, so jitter is a few ms or
+    worse (Windows default timer resolution is ~15 ms). The audio-driven clock
+    is M1 work.
 - Open decisions are listed at the end of CONTRACT.md.
 
 ## Next
@@ -38,3 +48,5 @@
   loop length in frames is not an integer, events at a loop boundary could be
   dropped depending on block size. Fixed by checking one loop either side of each
   block. Block-size independence is now tested for sizes 1 to 96000.
+- 2026-10-07: M0 core merged (PR #1). M0 app shell and CI on `m0-app-shell`.
+  Known limits are listed under "Where we are".
