@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(Phylotone VERSION 0.0.1 LANGUAGES CXX)
+project(Phylotone VERSION 0.0.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -14,6 +14,11 @@ target_compile_options(phylo_core PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-Wall -Wextra -Wpedantic>
     $<$<CXX_COMPILER_ID:MSVC>:/W4>
 )
+
+option(PHYLO_BUILD_APP "Build the Standalone app (fetches JUCE)" OFF)
+if(PHYLO_BUILD_APP)
+    add_subdirectory(app)
+endif()
 
 option(PHYLO_BUILD_TESTS "Build the core unit tests" ON)
 if(PHYLO_BUILD_TESTS)

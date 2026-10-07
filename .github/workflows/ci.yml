@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libx11-dev libxrandr-dev \
+            libxinerama-dev libxcursor-dev libgl1-mesa-dev libfreetype-dev
+
+      - name: Configure (core tests and Standalone app)
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DPHYLO_BUILD_TESTS=ON -DPHYLO_BUILD_APP=ON
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Core tests
+        run: ctest --test-dir build -C Release --output-on-failure
