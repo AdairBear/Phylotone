@@ -5,14 +5,6 @@ PlaybackEngine::PlaybackEngine() : juce::Thread("Phylotone playback")
     sequencer.setSampleRate(kSampleRate);
     sequencer.setTempo(120.0);
 
-    phylo::Pattern pattern(4.0);
-    // A C major arpeggio, one quarter note per step, so there is audible output
-    // to confirm the MIDI path.
-    const std::uint8_t notes[] = {60, 64, 67, 72};
-    for (int i = 0; i < 4; ++i)
-        pattern.addNote(static_cast<double>(i), notes[i], 100, 0.9);
-    sequencer.setPattern(pattern);
-
     scratch.reserve(64);
     startThread(juce::Thread::Priority::high);
 }
@@ -71,6 +63,21 @@ void PlaybackEngine::setTempo(double bpm)
 {
     std::lock_guard<std::mutex> lock(mutex);
     sequencer.setTempo(bpm);
+}
+
+void PlaybackEngine::setMeter(int beatsPerBar)
+{
+    std::lock_guard<std::mutex> lock(mutex);
+    sequencer.setMeter(beatsPerBar);
+}
+
+void PlaybackEngine::setPattern(phylo::Pattern p)
+{
+    std::lock_guard<std::mutex> lock(mutex);
+    if (sequencer.isPlaying())
+        sequencer.scheduleNextBar(std::move(p));
+    else
+        sequencer.setPattern(std::move(p));
 }
 
 bool PlaybackEngine::isPlaying() const

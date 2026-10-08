@@ -26,6 +26,30 @@
   - Known limit: M0 timing uses a 1 ms sleep loop, so jitter is a few ms or
     worse (Windows default timer resolution is ~15 ms). The audio-driven clock
     is M1 work.
+- M1 in progress (branch `m1-scene`):
+  - Done: scene language first cut (`core/include/phylo/Scene.h`): tempo, meter,
+    key (stored, not used yet), patterns with note names, sections (parsed and
+    validated, not played), `play` for the active pattern. Parse errors carry
+    line numbers and every error is reported.
+  - Done: pattern changes scheduled to the next bar (`Sequencer::scheduleNextBar`).
+    The block is split at the bar line, so the new pattern starts exactly on the bar.
+  - Done: the app watches `Documents/Phylotone/scene.phy` and reloads it on change.
+    A change to the pattern lands on the next bar while playing.
+  - Core tests: 34, passing under g++ and ASan/UBSan. Four regression tests
+    fail against the pre-review sequencer, so they catch the reviewed bugs.
+  - Not verified: the audible M1 check. The sandbox has no MIDI device.
+  - Decision made without you: scene syntax is our own (see Scene.h header), not
+    Strata-like. CONTRACT.md lists this as open; change it if you want Strata.
+  - Review (independent, Opus subagent) found and fixed: notes left sounding at a
+    switch; a duplicate bar-line event at fractional bar lengths; a `tempo nan`
+    that hung the app; NaN and odd numbers accepted by the parser; a tempo change
+    that moved the playhead; a missing or empty scene file resetting the tempo.
+    Time is now kept in beats, so tempo changes keep the playhead and bar lines.
+  - Known limits: sections are not played (M6). Key is not used (M3). Bar timing
+    is exact in the core but MIDI send timing is still the 1 ms loop. The
+    pattern swap frees memory on the playback thread (fine for the 1 ms loop;
+    must move to the audio thread's deferred free before the audio callback).
+    Immediate pattern changes while stopped start at the playhead, not at a bar.
 - Open decisions are listed at the end of CONTRACT.md.
 
 ## Next
@@ -50,3 +74,4 @@
   block. Block-size independence is now tested for sizes 1 to 96000.
 - 2026-10-07: M0 core merged (PR #1). M0 app shell and CI on `m0-app-shell`.
   Known limits are listed under "Where we are".
+- 2026-10-07: M1 first cut on `m1-scene`: scene parser, next-bar pattern changes, scene file watch.

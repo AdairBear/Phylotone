@@ -5,6 +5,7 @@
 // the resulting MIDI. Both sides only touch the sequencer and the output while
 // holding the mutex.
 //
+// Pattern changes are scheduled on bar lines (see phylo/Sequencer.h).
 // M0 timing is driven by a 1 ms sleep loop, so it is accurate to a few
 // milliseconds at best. The audio-driven clock comes in M1.
 
@@ -36,6 +37,11 @@ public:
     void play();
     void stop();
     void setTempo(double bpm);
+    void setMeter(int beatsPerBar);
+
+    // Sets the track's pattern. While playing, the change lands on the next bar.
+    // While stopped, it takes effect immediately.
+    void setPattern(phylo::Pattern p);
     bool isPlaying() const;
     double tempo() const;
 
