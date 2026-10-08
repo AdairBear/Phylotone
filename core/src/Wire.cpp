@@ -91,7 +91,7 @@ bool FrameDecoder::next(Frame& out)
         return false;
 
     const std::uint8_t type = buffer_[offset_ + 4];
-    if (type < static_cast<std::uint8_t>(MsgType::Hello) || type > static_cast<std::uint8_t>(MsgType::Error))
+    if (type < static_cast<std::uint8_t>(MsgType::Hello) || type > static_cast<std::uint8_t>(MsgType::StateResult))
     {
         failed_ = true;
         error_ = "unknown message type: " + std::to_string(type);

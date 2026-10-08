@@ -80,6 +80,29 @@ struct Host
         return "no plugin format reads this file: " + path.toStdString();
     }
 
+    // Plugin state as raw bytes, or empty if no plugin is loaded.
+    std::vector<std::uint8_t> getState()
+    {
+        std::vector<std::uint8_t> out;
+        if (plugin != nullptr)
+        {
+            juce::MemoryBlock block;
+            plugin->getStateInformation(block);
+            const auto* p = static_cast<const std::uint8_t*>(block.getData());
+            out.assign(p, p + block.getSize());
+        }
+        return out;
+    }
+
+    // Restores plugin state. Returns an empty string on success.
+    std::string setState(const std::vector<std::uint8_t>& bytes)
+    {
+        if (plugin == nullptr)
+            return "no plugin loaded";
+        plugin->setStateInformation(bytes.data(), static_cast<int>(bytes.size()));
+        return {};
+    }
+
     void process(const phylo::host::ProcessRequest& req)
     {
         const int channels = static_cast<int>(req.channels);
@@ -188,12 +211,20 @@ int runHost()
                 host.process(req);
                 break;
             }
+            case phylo::host::MsgType::GetState:
+                writeFrame(phylo::host::MsgType::State, host.getState());
+                break;
+            case phylo::host::MsgType::SetState:
+                writeFrame(phylo::host::MsgType::StateResult, phylo::host::encodeText(host.setState(frame.payload)));
+                break;
             case phylo::host::MsgType::Shutdown:
                 return 0;
             case phylo::host::MsgType::Hello:
             case phylo::host::MsgType::Loaded:
             case phylo::host::MsgType::Audio:
             case phylo::host::MsgType::Error:
+            case phylo::host::MsgType::State:
+            case phylo::host::MsgType::StateResult:
             default:
                 writeError("unexpected message from app");
                 break;

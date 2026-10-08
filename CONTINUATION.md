@@ -121,3 +121,4 @@
   pads and bass; macros density, tension, space. Seeded integer RNG for
   cross-platform identical output. Decision: the generated take replaces the
   `play` pattern when a `generate` line is present.
+- 2026-10-08: M4 slice 5 on `m4-state`: GetState/State and SetState/StateResult on the host wire protocol (raw plugin state bytes; `Host::getState`/`setState` in `phylo-plughost`). Core test for the new frames and the refused unknown types. Verified: Akazi XL loaded in the host, state read (882 bytes), `sourcePath` pointed at a 440 Hz WAV inside the processor payload, then a held note gave RMS 0.23 and peak 0.32 with silence before and after. The driver is a scratch script outside the repo. Not verified: generator-to-plugin playback; the supervisor is still not wired into PlaybackEngine.
