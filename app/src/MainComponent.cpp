@@ -25,9 +25,17 @@ juce::File sceneLocation()
         .getChildFile("Phylotone")
         .getChildFile("scene.phy");
 }
+
+juce::File assistantSettingsLocation()
+{
+    return juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
+        .getChildFile("Phylotone")
+        .getChildFile("assistant.settings");
+}
 } // namespace
 
 MainComponent::MainComponent()
+    : assistantController(sceneLocation(), assistantSettingsLocation())
 {
     sceneFile = sceneLocation();
     if (!sceneFile.existsAsFile())
@@ -66,11 +74,12 @@ MainComponent::MainComponent()
     addAndMakeVisible(refreshButton);
     addAndMakeVisible(sceneLabel);
     addAndMakeVisible(statusLabel);
+    addAndMakeVisible(assistantPanel);
 
     refreshOutputs();
     reloadSceneIfChanged();
     startTimer(kScenePollMs);
-    setSize(600, 340);
+    setSize(600, 780);
 }
 
 MainComponent::~MainComponent()
@@ -81,6 +90,7 @@ MainComponent::~MainComponent()
 void MainComponent::timerCallback()
 {
     reloadSceneIfChanged();
+    assistantController.pollSceneFile();
 }
 
 void MainComponent::reloadSceneIfChanged()
@@ -226,4 +236,7 @@ void MainComponent::resized()
 
     sceneLabel.setBounds(area.removeFromTop(kRowHeightPx));
     statusLabel.setBounds(area.removeFromTop(kRowHeightPx));
+    area.removeFromTop(kMarginPx);
+
+    assistantPanel.setBounds(area);
 }

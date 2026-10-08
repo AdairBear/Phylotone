@@ -18,6 +18,8 @@ target_compile_options(phylo_core PRIVATE
     $<$<CXX_COMPILER_ID:MSVC>:/W4>
 )
 
+enable_testing()
+
 option(PHYLO_BUILD_APP "Build the Standalone app (fetches JUCE)" OFF)
 if(PHYLO_BUILD_APP)
     add_subdirectory(app)
@@ -25,7 +27,6 @@ endif()
 
 option(PHYLO_BUILD_TESTS "Build the core unit tests" ON)
 if(PHYLO_BUILD_TESTS)
-    enable_testing()
     add_executable(phylo_core_tests tests/core/test_core.cpp)
     target_link_libraries(phylo_core_tests PRIVATE phylo_core)
     target_compile_options(phylo_core_tests PRIVATE

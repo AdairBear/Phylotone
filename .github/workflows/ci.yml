@@ -20,7 +20,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libasound2-dev libx11-dev libxrandr-dev \
-            libxinerama-dev libxcursor-dev libgl1-mesa-dev libfreetype-dev libfontconfig1-dev
+            libxinerama-dev libxcursor-dev libgl1-mesa-dev libfreetype-dev libfontconfig1-dev libcurl4-openssl-dev
 
       - name: Configure (core tests and Standalone app)
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DPHYLO_BUILD_TESTS=ON -DPHYLO_BUILD_APP=ON

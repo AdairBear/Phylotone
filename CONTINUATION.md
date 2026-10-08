@@ -82,3 +82,13 @@
   modes, action log with undo, stale-proposal guard, turn loop) with 51 core
   tests. Decision: the model is a user choice across vendors, not a fixed one.
   Keys come from environment variables, never from the project folder.
+- 2026-10-08: M2 app panel on `m2-assistant`. Provider choice (Claude, OpenAI,
+  Gemini, Local), model name, base URL, and mode (Off, Ask, Assist; default Ask).
+  Settings file holds no keys. Requests run on a background thread, one at a time.
+  Linux builds use libcurl, since JUCE's own Linux networking is HTTP only.
+  Known gaps: the scene file is written once per turn, not after each change;
+  approval and rejection are not reported back to the model; a slow local model
+  can hit the 60 s timeout.
+  Not verified: a live chat with any provider. No keys or network here.
+  Accept check (M2) still needs a person: change the bass rhythm, hear it land on
+  the next bar, then undo it.
