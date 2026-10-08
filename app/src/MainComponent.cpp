@@ -85,25 +85,39 @@ void MainComponent::timerCallback()
 
 void MainComponent::reloadSceneIfChanged()
 {
+    // A missing file (some editors save by delete and rename) keeps the current scene.
+    if (!sceneFile.existsAsFile())
+    {
+        sceneLabel.setText("Scene file missing; keeping the current scene", juce::dontSendNotification);
+        return;
+    }
+
     const auto modified = sceneFile.getLastModificationTime();
     if (sceneLoaded && modified == sceneModified)
         return;
 
+    sceneModified = modified;
+    sceneLoaded = true;
+
     const auto text = sceneFile.loadFileAsString().toStdString();
+    if (text.find_first_not_of(" \t\r\n") == std::string::npos)
+    {
+        // An empty file is most likely a save in progress. Keep the current scene.
+        sceneLabel.setText("Scene file is empty; keeping the current scene", juce::dontSendNotification);
+        return;
+    }
+
     const auto result = phylo::parseScene(text);
 
     if (!result.ok())
     {
         const auto& e = result.errors.front();
-        sceneLabel.setText("Scene error, line " + juce::String(e.line) + ": " + e.message,
+        sceneLabel.setText("Scene error, line " + juce::String(e.line) + ": " + e.message +
+                               " (keeping the current scene)",
                            juce::dontSendNotification);
-        sceneModified = modified; // do not retry until the file changes again
-        sceneLoaded = true;
         return;
     }
 
-    sceneModified = modified;
-    sceneLoaded = true;
     applyScene(result.scene);
 }
 
@@ -124,9 +138,12 @@ void MainComponent::applyScene(const phylo::Scene& next)
         engine.setPattern(phylo::buildPattern(*newActive));
 
     scene = next;
-    sceneLabel.setText("Scene: " + sceneFile.getFileName() + " loaded" +
-                           (changed ? " (pattern " + juce::String(next.activePattern) + " on next bar)" : ""),
-                       juce::dontSendNotification);
+    juce::String message = "Scene: " + sceneFile.getFileName() + " loaded";
+    if (next.activePattern.empty())
+        message += " (no play line, pattern unchanged)";
+    else if (changed)
+        message += " (pattern " + juce::String(next.activePattern) + " on next bar)";
+    sceneLabel.setText(message, juce::dontSendNotification);
     updateStatus();
 }
 

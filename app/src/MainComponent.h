@@ -35,7 +35,6 @@ private:
     juce::Time sceneModified;
     bool sceneLoaded = false;
     phylo::Scene scene;
-    std::string activePatternName;
 
     juce::Label titleLabel;
     juce::TextButton playButton { "Play" };

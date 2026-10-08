@@ -12,6 +12,7 @@
 
 #pragma once
 
+#include <bitset>
 #include <cstdint>
 #include <utility>
 #include <vector>
@@ -62,10 +63,12 @@ class Sequencer
 public:
     Sequencer() = default;
 
-    void setTempo(double bpm) noexcept { tempoBpm = bpm; }
+    // Changing tempo or sample rate while playing keeps the playhead on the same
+    // beat. Non-finite or non-positive values are ignored.
+    void setTempo(double bpm) noexcept;
     double tempo() const noexcept { return tempoBpm; }
 
-    void setSampleRate(double sr) noexcept { sampleRate = sr; }
+    void setSampleRate(double sr) noexcept;
     double getSampleRate() const noexcept { return sampleRate; }
 
     // Beats per bar. Bar lines fall every `beats` beats. Minimum 1.
@@ -77,10 +80,11 @@ public:
     const Pattern& getPattern() const noexcept { return pattern; }
 
     // Schedules a pattern to replace the current one at the next bar line.
-    // A second call before the bar replaces the first.
+    // A second call before the bar replaces the first. Notes the old pattern
+    // left sounding are released at the bar line.
     void scheduleNextBar(Pattern p);
     bool hasPendingPattern() const noexcept { return hasPending; }
-    std::int64_t pendingSwitchFrame() const noexcept { return switchFrame; }
+    std::int64_t pendingSwitchFrame() const;
 
     void play() noexcept { playing = true; }
     void stop() noexcept { playing = false; }
@@ -104,19 +108,30 @@ public:
     double framesPerBar() const noexcept;
 
 private:
+    // Time is kept in beats. The bar grid and the pattern start are beats, and a
+    // beat maps to a frame through the current tempo. That lets a tempo change
+    // keep the playhead and the bar lines where they are.
+    double beatAtFrame(double frame) const noexcept;
+    double frameOfBeat(double beat) const noexcept;
+    std::int64_t switchFrame() const noexcept;
     void emitRange(std::int64_t from, std::int64_t to, std::int64_t blockStart,
-                   std::vector<MidiOut>& out) const;
+                   std::vector<MidiOut>& out);
+    void releaseSounding(std::int64_t frame, std::int64_t blockStart, std::vector<MidiOut>& out);
+    void rebaseGrid() noexcept;
 
     Pattern pattern;
     Pattern pending;
     bool hasPending = false;
-    std::int64_t switchFrame = 0;     // frame at which `pending` takes over
-    std::int64_t patternOrigin = 0;   // frame of beat 0 of the current pattern
+    double switchBeat = 0.0;       // bar line at which `pending` takes over
+    double patternStartBeat = 0.0; // beat of beat 0 of the current pattern
+    double gridBeat0 = 0.0;        // beat at gridFrame0
+    std::int64_t gridFrame0 = 0;   // frame that anchors the beat grid
     double tempoBpm = 120.0;
     double sampleRate = 48000.0;
     int meterBeats = 4;
     bool playing = false;
     std::int64_t position = 0; // frames since rewind, not wrapped
+    std::bitset<128> sounding;  // notes currently on, for releasing at a switch
 };
 
 } // namespace phylo

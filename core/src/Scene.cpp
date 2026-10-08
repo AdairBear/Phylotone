@@ -1,6 +1,7 @@
 #include "phylo/Scene.h"
 
 #include <cerrno>
+#include <cmath>
 #include <cstdlib>
 #include <sstream>
 
@@ -26,14 +27,16 @@ std::string stripComment(const std::string& line)
     return pos == std::string::npos ? line : line.substr(0, pos);
 }
 
+// Plain decimal numbers only: digits, sign, point and exponent. This rejects
+// "nan", "inf" and hex, which strtod would otherwise accept.
 bool parseDouble(const std::string& token, double& out)
 {
-    if (token.empty())
+    if (token.empty() || token.find_first_not_of("0123456789+-.eE") != std::string::npos)
         return false;
     char* end = nullptr;
     errno = 0;
     const double v = std::strtod(token.c_str(), &end);
-    if (errno != 0 || end == token.c_str() || *end != '\0')
+    if (errno != 0 || end == token.c_str() || *end != '\0' || !std::isfinite(v))
         return false;
     out = v;
     return true;
@@ -42,7 +45,7 @@ bool parseDouble(const std::string& token, double& out)
 bool parseInt(const std::string& token, int& out)
 {
     double d = 0.0;
-    if (!parseDouble(token, d))
+    if (!parseDouble(token, d) || std::fabs(d) > 1.0e9)
         return false;
     const int i = static_cast<int>(d);
     if (static_cast<double>(i) != d)
@@ -54,6 +57,39 @@ bool parseInt(const std::string& token, int& out)
 bool isNoteLetter(char c)
 {
     return c >= 'A' && c <= 'G';
+}
+
+// A key root is a letter A to G with an optional # or b, and no octave.
+bool isKeyRoot(const std::string& s)
+{
+    if (s.empty() || !isNoteLetter(s[0]))
+        return false;
+    if (s.size() == 1)
+        return true;
+    if (s.size() == 2 && (s[1] == '#' || s[1] == 'b'))
+        return true;
+    return false;
+}
+
+// Old Mac (CR-only) and Windows (CRLF) line endings become LF.
+std::string normaliseLineEndings(const std::string& text)
+{
+    std::string out;
+    out.reserve(text.size());
+    for (std::size_t i = 0; i < text.size(); ++i)
+    {
+        if (text[i] == '\r')
+        {
+            out.push_back('\n');
+            if (i + 1 < text.size() && text[i + 1] == '\n')
+                ++i;
+        }
+        else
+        {
+            out.push_back(text[i]);
+        }
+    }
+    return out;
 }
 
 } // namespace
@@ -142,16 +178,13 @@ ParseResult parseScene(const std::string& text)
     Block block = Block::None;
     int activeLine = 0; // line of the top-level `play`, for the cross-check
 
-    std::istringstream in(text);
+    std::istringstream in(normaliseLineEndings(text));
     std::string raw;
     int lineNo = 0;
 
     while (std::getline(in, raw))
     {
         ++lineNo;
-        if (!raw.empty() && raw.back() == '\r')
-            raw.pop_back();
-
         const bool indented = !raw.empty() && (raw[0] == ' ' || raw[0] == '\t');
         const auto words = splitWords(stripComment(raw));
         if (words.empty())
@@ -233,10 +266,8 @@ ParseResult parseScene(const std::string& text)
             }
             else
             {
-                int ignored = 0;
-                // Validate the root by reading it as a note in octave 4.
-                if (!parseNoteToken(words[1] + "4", ignored))
-                    error(lineNo, "key root is not a note name: " + words[1]);
+                if (!isKeyRoot(words[1]))
+                    error(lineNo, "key root must be a note name without octave: " + words[1]);
                 else
                 {
                     scene.hasKey = true;

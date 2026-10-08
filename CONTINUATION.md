@@ -35,12 +35,21 @@
     The block is split at the bar line, so the new pattern starts exactly on the bar.
   - Done: the app watches `Documents/Phylotone/scene.phy` and reloads it on change.
     A change to the pattern lands on the next bar while playing.
-  - Core tests: 28, passing under g++ and ASan/UBSan.
+  - Core tests: 34, passing under g++ and ASan/UBSan. Four regression tests
+    fail against the pre-review sequencer, so they catch the reviewed bugs.
   - Not verified: the audible M1 check. The sandbox has no MIDI device.
   - Decision made without you: scene syntax is our own (see Scene.h header), not
     Strata-like. CONTRACT.md lists this as open; change it if you want Strata.
+  - Review (independent, Opus subagent) found and fixed: notes left sounding at a
+    switch; a duplicate bar-line event at fractional bar lengths; a `tempo nan`
+    that hung the app; NaN and odd numbers accepted by the parser; a tempo change
+    that moved the playhead; a missing or empty scene file resetting the tempo.
+    Time is now kept in beats, so tempo changes keep the playhead and bar lines.
   - Known limits: sections are not played (M6). Key is not used (M3). Bar timing
-    is exact in the core but MIDI send timing is still the 1 ms loop.
+    is exact in the core but MIDI send timing is still the 1 ms loop. The
+    pattern swap frees memory on the playback thread (fine for the 1 ms loop;
+    must move to the audio thread's deferred free before the audio callback).
+    Immediate pattern changes while stopped start at the playhead, not at a bar.
 - Open decisions are listed at the end of CONTRACT.md.
 
 ## Next

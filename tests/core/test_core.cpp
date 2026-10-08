@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <functional>
+#include <limits>
 #include <map>
 #include <string>
 #include <tuple>
@@ -671,6 +672,142 @@ TEST(parsed_pattern_plays_through_the_sequencer)
             CHECK_EQ(msgs[0].note, 60);
             CHECK_EQ(msgs[1].frame, 12000);
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Regressions from review of M1
+
+TEST(switch_releases_a_note_the_old_pattern_leaves_sounding)
+{
+    // Note C4 starts on beat 3 and is meant to end on beat 4, the bar line. The
+    // switch drops the old note-off, so the sequencer must release the note itself.
+    phylo::Pattern a(4.0);
+    a.addNote(3.0, 60, 100, 1.0);
+    phylo::Pattern b(4.0);
+    b.addNote(0.0, 62, 100, 0.5);
+
+    auto s = makeSequencer(120.0, 48000.0, a);
+    s.play();
+    auto msgs = render(s, 80000, 512); // past the on at 72000
+    s.scheduleNextBar(b);
+    const auto rest = render(s, 40000, 512); // 80000 .. 120000
+    msgs.insert(msgs.end(), rest.begin(), rest.end());
+
+    int onCount = 0, offCount = 0;
+    std::int64_t offFrame = -1;
+    for (const auto& m : msgs)
+    {
+        if (m.note != 60)
+            continue;
+        if (m.status == 0x90)
+            ++onCount;
+        if (m.status == 0x80)
+        {
+            ++offCount;
+            offFrame = m.frame;
+        }
+    }
+    CHECK_EQ(onCount, 1);
+    CHECK_EQ(offCount, 1);
+    CHECK_EQ(offFrame, 96000);
+}
+
+TEST(switch_at_a_fractional_bar_does_not_duplicate_the_bar_line_event)
+{
+    // At 130 bpm a bar is 88615.38 frames. The old pattern's beat 0 falls at frame
+    // 88615, which is the bar line. The new pattern must start there, once.
+    phylo::Pattern a(4.0);
+    a.addNote(0.0, 60, 100, 0.5);
+    phylo::Pattern b(4.0);
+    b.addNote(0.0, 72, 100, 0.5);
+
+    auto s = makeSequencer(130.0, 48000.0, a);
+    s.play();
+    render(s, 50000, 512);
+    s.scheduleNextBar(b);
+    const auto msgs = render(s, 200000, 512);
+
+    int onAtBarLine = 0;
+    bool oldAfterBar = false;
+    for (const auto& m : msgs)
+    {
+        if (m.status == 0x90 && m.frame == 88615)
+            ++onAtBarLine;
+        if (m.status == 0x90 && m.note == 60 && m.frame >= 88615)
+            oldAfterBar = true;
+    }
+    CHECK_EQ(onAtBarLine, 1);
+    CHECK(!oldAfterBar);
+}
+
+TEST(tempo_change_keeps_the_playhead_on_its_beat)
+{
+    phylo::Pattern p(4.0);
+    p.addNote(0.0, 60, 100, 0.5);
+    p.addNote(3.0, 65, 100, 0.5);
+    auto s = makeSequencer(120.0, 48000.0, p);
+    s.play();
+    render(s, 72000, 512); // playhead on beat 3.0
+
+    s.setTempo(60.0); // one beat is now 48000 frames
+    CHECK(std::abs(s.positionBeats() - 3.0) < 1e-9);
+
+    const auto msgs = render(s, 60000, 512); // 72000 .. 132000
+    std::int64_t beat3 = -1, beat4 = -1;
+    for (const auto& m : msgs)
+    {
+        if (m.status == 0x90 && m.note == 65 && beat3 < 0)
+            beat3 = m.frame;
+        if (m.status == 0x90 && m.note == 60 && beat4 < 0)
+            beat4 = m.frame;
+    }
+    CHECK_EQ(beat3, 72000);
+    CHECK_EQ(beat4, 120000);
+}
+
+TEST(invalid_tempo_is_ignored_by_the_sequencer)
+{
+    phylo::Sequencer s;
+    s.setTempo(120.0);
+    s.setTempo(std::nan(""));
+    s.setTempo(-5.0);
+    s.setTempo(0.0);
+    CHECK(std::abs(s.tempo() - 120.0) < 1e-9);
+    s.setSampleRate(std::numeric_limits<double>::infinity());
+    CHECK(std::abs(s.getSampleRate() - 48000.0) < 1e-9);
+}
+
+TEST(scene_rejects_non_finite_and_malformed_numbers)
+{
+    const char* bad[] = {
+        "tempo nan\n",
+        "tempo inf\n",
+        "tempo 0x40\n",
+        "meter 1e300\n",
+        "pattern p nan\n",
+        "pattern p 4\n  0 C4 100 nan\n",
+        "pattern p 4\n  nan C4 100 1\n",
+        "key 1 major\n",
+        "key C0 minor\n",
+    };
+    for (const char* text : bad)
+    {
+        const auto r = phylo::parseScene(text);
+        if (r.ok())
+            std::printf("  FAIL [%s] accepted: %s", gCurrent, text);
+        CHECK(!r.ok());
+    }
+}
+
+TEST(scene_accepts_cr_only_line_endings)
+{
+    const auto r = phylo::parseScene("tempo 100\rmeter 3\rpattern p 4\r  0 C4 100 0.5\r");
+    CHECK(r.ok());
+    if (r.ok())
+    {
+        CHECK(std::abs(r.scene.tempo - 100.0) < 1e-9);
+        CHECK_EQ(r.scene.patterns[0].notes.size(), 1u);
     }
 }
 
