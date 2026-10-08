@@ -1495,6 +1495,27 @@ TEST(wire_process_rejects_inconsistent_payloads)
     CHECK(!phylo::host::decodeProcess({1, 2, 3}, out));
 }
 
+TEST(wire_state_frames_carry_raw_bytes_and_unknown_types_past_the_new_end_are_refused)
+{
+    // Plugin state is binary, so it must survive unchanged, including 0x00 and 0xFF.
+    const std::vector<std::uint8_t> state = {0x00, 0xFF, 0x7F, 0x80, 0x0A, 0x00};
+    phylo::host::FrameDecoder dec;
+    const auto get = phylo::host::encodeFrame(phylo::host::MsgType::GetState, {});
+    const auto set = phylo::host::encodeFrame(phylo::host::MsgType::SetState, state);
+    dec.feed(get.data(), get.size());
+    dec.feed(set.data(), set.size());
+    phylo::host::Frame a, b;
+    CHECK(dec.next(a) && a.type == phylo::host::MsgType::GetState && a.payload.empty());
+    CHECK(dec.next(b) && b.type == phylo::host::MsgType::SetState && b.payload == state);
+
+    const std::vector<std::uint8_t> bad = {0x00, 0x00, 0x00, 0x00, 0x0C}; // type 12: not defined
+    phylo::host::FrameDecoder dec2;
+    dec2.feed(bad.data(), bad.size());
+    phylo::host::Frame f;
+    CHECK(!dec2.next(f));
+    CHECK(dec2.failed());
+}
+
 TEST(wire_hello_audio_and_text_round_trip)
 {
     std::uint32_t v = 0, sr = 0, mb = 0;

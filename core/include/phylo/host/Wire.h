@@ -26,6 +26,10 @@ enum class MsgType : std::uint8_t
     Audio = 5,    // host -> app: planar audio output for one Process
     Shutdown = 6, // app -> host: exit cleanly
     Error = 7,    // host -> app: a problem the app should show
+    GetState = 8,    // app -> host: ask for the plugin's state
+    State = 9,       // host -> app: the plugin's state, raw bytes (answers GetState)
+    SetState = 10,   // app -> host: restore the plugin's state from raw bytes
+    StateResult = 11 // host -> app: text payload, empty when the state was applied
 };
 
 struct Frame
