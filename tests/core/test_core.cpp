@@ -4,6 +4,7 @@
 // returns non-zero if any check failed, so ctest picks it up.
 
 #include "phylo/Generator.h"
+#include "phylo/host/Wire.h"
 #include "phylo/Scene.h"
 #include "phylo/assistant/Assistant.h"
 #include "phylo/assistant/Json.h"
@@ -1368,6 +1369,149 @@ TEST(generator_without_a_generate_line_makes_no_take)
     const auto r = phylo::parseScene("chords C G\n");
     CHECK(r.ok());
     CHECK(!phylo::hasGeneratedTake(r.scene));
+}
+
+
+// ---------------------------------------------------------------------------
+// Host wire protocol (M4)
+
+namespace
+{
+std::vector<std::uint8_t> bytesOf(const std::string& s)
+{
+    return std::vector<std::uint8_t>(s.begin(), s.end());
+}
+
+// Feeds bytes one at a time and collects every frame.
+std::vector<phylo::host::Frame> decodeOneByteAtATime(const std::vector<std::uint8_t>& bytes, bool& failed)
+{
+    phylo::host::FrameDecoder dec;
+    std::vector<phylo::host::Frame> out;
+    for (std::uint8_t b : bytes)
+    {
+        dec.feed(&b, 1);
+        phylo::host::Frame f;
+        while (dec.next(f))
+            out.push_back(f);
+    }
+    failed = dec.failed();
+    return out;
+}
+} // namespace
+
+TEST(wire_frames_survive_arbitrary_splits)
+{
+    auto a = phylo::host::encodeFrame(phylo::host::MsgType::Load, bytesOf("/plugins/Akazi.vst3"));
+    auto b = phylo::host::encodeFrame(phylo::host::MsgType::Shutdown, {});
+    std::vector<std::uint8_t> both = a;
+    both.insert(both.end(), b.begin(), b.end());
+
+    bool failed = true;
+    const auto frames = decodeOneByteAtATime(both, failed);
+    CHECK(!failed);
+    CHECK(frames.size() == 2);
+    if (frames.size() == 2)
+    {
+        CHECK(frames[0].type == phylo::host::MsgType::Load);
+        CHECK(std::string(frames[0].payload.begin(), frames[0].payload.end()) == "/plugins/Akazi.vst3");
+        CHECK(frames[1].type == phylo::host::MsgType::Shutdown);
+        CHECK(frames[1].payload.empty());
+    }
+}
+
+TEST(wire_truncated_frame_waits_and_does_not_fail)
+{
+    auto full = phylo::host::encodeFrame(phylo::host::MsgType::Error, bytesOf("boom"));
+    full.pop_back();
+    phylo::host::FrameDecoder dec;
+    dec.feed(full.data(), full.size());
+    phylo::host::Frame f;
+    CHECK(!dec.next(f));
+    CHECK(!dec.failed());
+}
+
+TEST(wire_oversize_length_is_refused_before_allocating)
+{
+    // Length field says 4 GB; the decoder must fail without waiting for the bytes.
+    const std::vector<std::uint8_t> hostile = {0xFF, 0xFF, 0xFF, 0xFF, 0x05};
+    phylo::host::FrameDecoder dec;
+    dec.feed(hostile.data(), hostile.size());
+    phylo::host::Frame f;
+    CHECK(!dec.next(f));
+    CHECK(dec.failed());
+    CHECK(!dec.error().empty());
+}
+
+TEST(wire_unknown_type_fails_the_stream)
+{
+    const std::vector<std::uint8_t> bad = {0x00, 0x00, 0x00, 0x00, 0x99};
+    phylo::host::FrameDecoder dec;
+    dec.feed(bad.data(), bad.size());
+    phylo::host::Frame f;
+    CHECK(!dec.next(f));
+    CHECK(dec.failed());
+}
+
+TEST(wire_process_round_trips_midi_and_planar_audio)
+{
+    phylo::host::ProcessRequest req;
+    req.frames = 3;
+    req.channels = 2;
+    req.midi = {{0, 0x90, 60, 100}, {2, 0x80, 60, 0}};
+    req.audio = {0.25f, -0.5f, 1.0f, -1.0f, 0.0f, 0.125f};
+
+    phylo::host::ProcessRequest back;
+    CHECK(phylo::host::decodeProcess(phylo::host::encodeProcess(req), back));
+    CHECK(back.frames == 3 && back.channels == 2);
+    CHECK(back.midi.size() == 2 && back.midi[1].frame == 2 && back.midi[1].status == 0x80);
+    CHECK(back.audio.size() == 6);
+    for (std::size_t i = 0; i < back.audio.size() && i < req.audio.size(); ++i)
+        CHECK(back.audio[i] == req.audio[i]);
+}
+
+TEST(wire_process_rejects_inconsistent_payloads)
+{
+    phylo::host::ProcessRequest req;
+    req.frames = 2;
+    req.channels = 2;
+    req.audio = {0.0f, 0.0f, 0.0f, 0.0f};
+    auto good = phylo::host::encodeProcess(req);
+
+    phylo::host::ProcessRequest out;
+    // Trailing byte.
+    auto extra = good;
+    extra.push_back(0);
+    CHECK(!phylo::host::decodeProcess(extra, out));
+    // Claims more frames than the audio carries.
+    auto lying = good;
+    lying[0] = 3;
+    CHECK(!phylo::host::decodeProcess(lying, out));
+    // MIDI count larger than the payload can hold.
+    auto midiLie = good;
+    midiLie[8] = 0xFF;
+    midiLie[9] = 0xFF;
+    CHECK(!phylo::host::decodeProcess(midiLie, out));
+    // Too short to hold the header.
+    CHECK(!phylo::host::decodeProcess({1, 2, 3}, out));
+}
+
+TEST(wire_hello_audio_and_text_round_trip)
+{
+    std::uint32_t v = 0, sr = 0, mb = 0;
+    CHECK(phylo::host::decodeHello(phylo::host::encodeHello(1, 48000, 512), v, sr, mb));
+    CHECK(v == 1 && sr == 48000 && mb == 512);
+    CHECK(!phylo::host::decodeHello({1, 0, 0, 0, 2}, v, sr, mb));
+
+    const std::vector<float> audio = {0.5f, -0.5f};
+    std::uint32_t f = 0, c = 0;
+    std::vector<float> back;
+    CHECK(phylo::host::decodeAudio(phylo::host::encodeAudio(1, 2, audio), f, c, back));
+    CHECK(f == 1 && c == 2 && back == audio);
+    CHECK(!phylo::host::decodeAudio({1, 0, 0, 0, 2, 0, 0, 0, 0, 0}, f, c, back));
+
+    std::string text;
+    CHECK(phylo::host::decodeText(phylo::host::encodeText("C:\\Plugins\\x.vst3"), text));
+    CHECK(text == "C:\\Plugins\\x.vst3");
 }
 
 // ---------------------------------------------------------------------------
