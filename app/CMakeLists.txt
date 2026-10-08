@@ -72,6 +72,17 @@ target_link_libraries(phylo-plughost PRIVATE
     juce::juce_recommended_warning_flags
 )
 
+# The plugin host supervisor's kill test. Plain C++, no JUCE.
+add_executable(phylo_supervisor_check
+    src/host/SupervisorCheck.cpp
+    src/host/PluginHostSupervisor.cpp
+    src/host/ProcessPipe.cpp
+)
+target_include_directories(phylo_supervisor_check PRIVATE src/host)
+target_link_libraries(phylo_supervisor_check PRIVATE phylo_core)
+add_dependencies(phylo_supervisor_check phylo-plughost)
+add_test(NAME phylo_supervisor_kill COMMAND phylo_supervisor_check $<TARGET_FILE:phylo-plughost>)
+
 # Headless check of the assistant settings file format (no JUCE).
 add_executable(phylo_app_checks
     src/AssistantSettings.cpp
