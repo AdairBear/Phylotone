@@ -111,6 +111,8 @@
   Accept check (M2) still needs a person: change the bass rhythm, hear it land on
   the next bar, then undo it.
 - 2026-10-08: PR #3 (M1 scene) merged. PR #4 (M2 assistant) merged on Thomas's go-ahead.
+- 2026-10-08: PR #5 (M3) merged. M3 hardening: a self-review of the generator found no defects beyond the tests; no separate hardening PR.
+- 2026-10-08: Plugin hosting decided: separate process per plugin (recorded in CONTRACT.md section 7). M4 starts on `m4-plugin-host`.
 - 2026-10-08: M3 generator on `m3-generator`: chords, seed and generate directives;
   pads and bass; macros density, tension, space. Seeded integer RNG for
   cross-platform identical output. Decision: the generated take replaces the

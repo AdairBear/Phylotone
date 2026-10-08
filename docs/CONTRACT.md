@@ -87,6 +87,7 @@ documentation.
 
 - Working name: Phylotone (placeholder, not yet cleared; a full naming session is planned later).
 - Scene language syntax: close to the Strata screenshots, or our own.
-- Plugin hosting: JUCE's built-in host, or a separate process for each plugin.
+- Plugin hosting: RESOLVED 2026-10-08: a separate process for each plugin. Reason: the M4
+  accept test requires the app to survive a killed plugin, which an in-process host cannot do.
 - Assistant model and where it runs: locally, through the API, or both.
 - Streaming first target: Icecast or RTMP.
