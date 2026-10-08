@@ -58,6 +58,20 @@ target_link_libraries(PhylotoneApp PRIVATE
     juce::juce_recommended_warning_flags
 )
 
+# The plugin host: one plugin per process, so a crashing plugin cannot take the app down.
+juce_add_console_app(phylo-plughost
+    PRODUCT_NAME "phylo-plughost"
+)
+juce_generate_juce_header(phylo-plughost)
+target_sources(phylo-plughost PRIVATE plughost/PluginHostMain.cpp)
+target_compile_definitions(phylo-plughost PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+target_link_libraries(phylo-plughost PRIVATE
+    phylo_core
+    juce::juce_audio_processors
+    juce::juce_recommended_config_flags
+    juce::juce_recommended_warning_flags
+)
+
 # Headless check of the assistant settings file format (no JUCE).
 add_executable(phylo_app_checks
     src/AssistantSettings.cpp
