@@ -18,6 +18,8 @@
 #if defined(_WIN32)
   #include <fcntl.h>
   #include <io.h>
+#else
+  #include <unistd.h>
 #endif
 
 namespace
@@ -131,11 +133,17 @@ int main()
 
     for (;;)
     {
-        const std::size_t n = std::fread(chunk, 1, sizeof chunk, stdin);
-        if (n == 0)
+        // read() returns what is available now. fread() would wait for a full buffer,
+        // which a live pipe may never deliver.
+#if defined(_WIN32)
+        const int n = _read(_fileno(stdin), chunk, static_cast<unsigned int>(sizeof chunk));
+#else
+        const ssize_t n = read(STDIN_FILENO, chunk, sizeof chunk);
+#endif
+        if (n <= 0)
             return 0; // app closed the pipe
 
-        decoder.feed(chunk, n);
+        decoder.feed(chunk, static_cast<std::size_t>(n));
 
         phylo::host::Frame frame;
         while (decoder.next(frame))
