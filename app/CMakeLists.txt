@@ -83,6 +83,19 @@ target_link_libraries(phylo_supervisor_check PRIVATE phylo_core)
 add_dependencies(phylo_supervisor_check phylo-plughost)
 add_test(NAME phylo_supervisor_kill COMMAND phylo_supervisor_check $<TARGET_FILE:phylo-plughost>)
 
+# Headless check that the pipelined renderer never blocks its caller. Plain C++, no JUCE.
+find_package(Threads REQUIRED)
+add_executable(phylo_renderer_check
+    src/host/RendererCheck.cpp
+    src/host/PipelinedRenderer.cpp
+    src/host/PluginHostSupervisor.cpp
+    src/host/ProcessPipe.cpp
+)
+target_include_directories(phylo_renderer_check PRIVATE src/host)
+target_link_libraries(phylo_renderer_check PRIVATE phylo_core Threads::Threads)
+add_dependencies(phylo_renderer_check phylo-plughost)
+add_test(NAME phylo_renderer_pipelined COMMAND phylo_renderer_check $<TARGET_FILE:phylo-plughost>)
+
 # Headless check of the assistant settings file format (no JUCE).
 add_executable(phylo_app_checks
     src/AssistantSettings.cpp
