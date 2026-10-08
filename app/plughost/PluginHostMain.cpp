@@ -117,12 +117,27 @@ struct Host
 
 } // namespace
 
+int runHost();
+
 int main()
+{
+    // runHost() has already destroyed the plugin. Skip JUCE's global teardown: it
+    // reports leaked singletons for a process that is about to exit anyway.
+    const int result = runHost();
+    std::fflush(stdout);
+    std::_Exit(result);
+}
+
+int runHost()
 {
 #if defined(_WIN32)
     _setmode(_fileno(stdin), _O_BINARY);
     _setmode(_fileno(stdout), _O_BINARY);
 #endif
+
+    // Plugins are created and set up on the message thread. This process has no
+    // window, so the message manager is created without the GUI.
+    juce::MessageManager::getInstance();
 
     writeFrame(phylo::host::MsgType::Hello,
                phylo::host::encodeHello(phylo::host::kProtocolVersion, kSampleRate, kMaxBlock));
@@ -192,3 +207,4 @@ int main()
         }
     }
 }
+

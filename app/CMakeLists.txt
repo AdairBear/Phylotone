@@ -64,7 +64,7 @@ juce_add_console_app(phylo-plughost
 )
 juce_generate_juce_header(phylo-plughost)
 target_sources(phylo-plughost PRIVATE plughost/PluginHostMain.cpp)
-target_compile_definitions(phylo-plughost PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+target_compile_definitions(phylo-plughost PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_PLUGINHOST_VST3=1)
 target_link_libraries(phylo-plughost PRIVATE
     phylo_core
     juce::juce_audio_processors
