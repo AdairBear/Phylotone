@@ -6,6 +6,8 @@
 
 #include "phylo/Scene.h"
 
+#include <optional>
+
 #include <juce_gui_basics/juce_gui_basics.h>
 
 // Main window. Watches the scene file and reloads it when it changes.
@@ -37,6 +39,7 @@ private:
     juce::Time sceneModified;
     bool sceneLoaded = false;
     phylo::Scene scene;
+    std::optional<phylo::ScenePattern> sentTake; // the last pattern sent to the engine
 
     juce::Label titleLabel;
     juce::TextButton playButton { "Play" };

@@ -11,6 +11,7 @@ add_library(phylo_core STATIC
     core/src/Scene.cpp
     core/src/Json.cpp
     core/src/Assistant.cpp
+    core/src/Generator.cpp
 )
 target_include_directories(phylo_core PUBLIC core/include)
 target_compile_options(phylo_core PRIVATE

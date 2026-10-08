@@ -1,6 +1,6 @@
 # Phylotone: continuation brief
 
-*For any session picking up this project. Last updated 2026-10-07.*
+*For any session picking up this project. Last updated 2026-10-08.*
 
 ## Read first
 1. `docs/CONTRACT.md`: the completion contract. Everything is measured against it.
@@ -50,6 +50,24 @@
     pattern swap frees memory on the playback thread (fine for the 1 ms loop;
     must move to the audio thread's deferred free before the audio callback).
     Immediate pattern changes while stopped start at the playhead, not at a bar.
+- M2 merged (PR #4). Still open from M2: the accept check needs a person; live
+  chat is untested; scene file is written per turn, not per change; approve and
+  reject are not reported to the model; slow local models can hit the 60 s timeout.
+- M3 in progress (branch `m3-generator`):
+  - Done: scene directives `chords` (one chord per bar, 1 to 16), `seed`, and
+    `generate pad bass`. Generator in `core/include/phylo/Generator.h`, with
+    macros density (bass), tension (pad sevenths), space (pad length and level).
+  - Determinism: the random source is hand-written integer code, not a standard
+    library distribution, so output is the same across compilers. Every random
+    draw is made whether used or not, so changing density does not reshuffle
+    other rolls.
+  - The app plays the generated take in place of the `play` pattern, and a
+    macro or seed change lands on the next bar.
+  - Core tests: 62, passing under g++ and ASan/UBSan. Accept check
+    (same seed and settings give identical MIDI twice) is a core test.
+  - Not verified: audible output (no MIDI device here). Voicings are simple
+    (root, third, fifth, optional seventh; bass root plus rolls). Not reviewed
+    musically yet.
 - Open decisions are listed at the end of CONTRACT.md.
 
 ## Next
@@ -92,3 +110,8 @@
   Not verified: a live chat with any provider. No keys or network here.
   Accept check (M2) still needs a person: change the bass rhythm, hear it land on
   the next bar, then undo it.
+- 2026-10-08: PR #3 (M1 scene) merged. PR #4 (M2 assistant) merged on Thomas's go-ahead.
+- 2026-10-08: M3 generator on `m3-generator`: chords, seed and generate directives;
+  pads and bass; macros density, tension, space. Seeded integer RNG for
+  cross-platform identical output. Decision: the generated take replaces the
+  `play` pattern when a `generate` line is present.

@@ -3,6 +3,7 @@
 // Each TEST registers a function. main() runs them all, prints failures, and
 // returns non-zero if any check failed, so ctest picks it up.
 
+#include "phylo/Generator.h"
 #include "phylo/Scene.h"
 #include "phylo/assistant/Assistant.h"
 #include "phylo/assistant/Json.h"
@@ -1136,6 +1137,237 @@ TEST(scene_macro_directive_parses_and_rejects_duplicates)
     CHECK(good.ok());
     if (good.ok())
         CHECK(std::abs(good.scene.macros[0].value - 0.5) < 1e-12);
+}
+
+
+// ---------------------------------------------------------------------------
+// Generator (M3)
+
+namespace
+{
+const char* kGenScene =
+    "tempo 120\n"
+    "meter 4\n"
+    "chords Am F C G\n"
+    "seed 7\n"
+    "generate pad bass\n"
+    "macro density 0.6\n"
+    "macro tension 0.7\n"
+    "macro space 0.4\n";
+
+phylo::ScenePattern takeFrom(const std::string& text)
+{
+    const auto r = phylo::parseScene(text);
+    CHECK(r.ok());
+    return phylo::generateTake(r.scene);
+}
+
+// Pitch classes of the chord for a bar, from the scene's own chord list.
+// The pad test uses tension 0.7, so a flat seventh (10) may be added to any chord.
+bool isChordTone(int note, const phylo::SceneChord& c)
+{
+    const int pc = note % 12;
+    const int d = ((pc - c.rootPitchClass) % 12 + 12) % 12;
+    if (d == 10)
+        return true;
+    switch (c.quality)
+    {
+    case phylo::ChordQuality::Minor:      return d == 0 || d == 3 || d == 7;
+    case phylo::ChordQuality::Diminished: return d == 0 || d == 3 || d == 6;
+    case phylo::ChordQuality::Dominant7:  return d == 0 || d == 4 || d == 7 || d == 10;
+    case phylo::ChordQuality::Minor7:     return d == 0 || d == 3 || d == 7 || d == 10;
+    case phylo::ChordQuality::Major7:     return d == 0 || d == 4 || d == 7 || d == 11;
+    case phylo::ChordQuality::Major:
+    default:                              return d == 0 || d == 4 || d == 7;
+    }
+}
+} // namespace
+
+TEST(generator_same_seed_and_settings_give_identical_notes)
+{
+    const auto a = takeFrom(kGenScene);
+    const auto b = takeFrom(kGenScene);
+    CHECK(!a.notes.empty());
+    CHECK(phylo::samePattern(a, b));
+    CHECK(a.notes.size() == b.notes.size());
+}
+
+TEST(generator_identical_midi_through_the_sequencer_twice)
+{
+    // The accept check of M3: the same seed and settings give the same MIDI output.
+    auto render = [] {
+        const auto r = phylo::parseScene(kGenScene);
+        const phylo::Pattern p = phylo::buildPattern(phylo::generateTake(r.scene));
+        phylo::Sequencer seq;
+        seq.setSampleRate(48000.0);
+        seq.setTempo(120.0);
+        seq.setMeter(4);
+        seq.setPattern(p);
+        seq.play();
+        std::vector<phylo::MidiOut> all;
+        std::vector<phylo::MidiOut> block;
+        for (int i = 0; i < 2000; ++i)
+        {
+            block.clear();
+            seq.process(48, block);
+            for (auto m : block)
+            {
+                m.sampleOffset += i * 48;
+                all.push_back(m);
+            }
+        }
+        return all;
+    };
+    const auto first = render();
+    const auto second = render();
+    CHECK(!first.empty());
+    CHECK(first.size() == second.size());
+    bool same = first.size() == second.size();
+    for (std::size_t i = 0; same && i < first.size(); ++i)
+        same = first[i].sampleOffset == second[i].sampleOffset && first[i].status == second[i].status &&
+               first[i].data1 == second[i].data1 && first[i].data2 == second[i].data2;
+    CHECK(same);
+}
+
+TEST(generator_different_seed_changes_the_bass_rolls)
+{
+    std::string other = kGenScene;
+    other.replace(other.find("seed 7"), 6, "seed 8");
+    const auto a = takeFrom(kGenScene);
+    const auto b = takeFrom(other);
+    CHECK(!phylo::samePattern(a, b));
+}
+
+TEST(generator_pads_use_the_chord_of_each_bar)
+{
+    const auto r = phylo::parseScene(kGenScene);
+    CHECK(r.ok());
+    const auto take = phylo::generateTake(r.scene);
+    CHECK(std::abs(take.lengthBeats - 16.0) < 1e-12);
+
+    for (const auto& n : take.notes)
+    {
+        const int bar = static_cast<int>(std::floor(n.beat / 4.0));
+        const auto& chord = r.scene.chords[static_cast<std::size_t>(bar)];
+        // Pads are the notes from 48 up; bass is from 36 up to 47.
+        if (n.note >= 48)
+            CHECK(isChordTone(n.note, chord));
+        else
+            CHECK(n.note % 12 == chord.rootPitchClass);
+    }
+}
+
+TEST(generator_bass_plays_the_root_on_every_downbeat)
+{
+    const auto r = phylo::parseScene(kGenScene);
+    const auto take = phylo::generateTake(r.scene);
+    for (int bar = 0; bar < 4; ++bar)
+    {
+        bool found = false;
+        for (const auto& n : take.notes)
+            if (n.beat == bar * 4.0 && n.note < 48)
+            {
+                found = true;
+                const auto& chord = r.scene.chords[static_cast<std::size_t>(bar)];
+                CHECK(n.note == 36 + chord.rootPitchClass);
+            }
+        CHECK(found);
+    }
+}
+
+TEST(generator_density_macro_only_adds_bass_notes)
+{
+    // Changing density must not move the pads or the downbeats, and more density adds notes.
+    std::string sparse = kGenScene;
+    sparse.replace(sparse.find("macro density 0.6"), 17, "macro density 0.0");
+    std::string dense = kGenScene;
+    dense.replace(dense.find("macro density 0.6"), 17, "macro density 1.0");
+    const auto a = takeFrom(sparse);
+    const auto b = takeFrom(dense);
+    CHECK(a.notes.size() < b.notes.size());
+
+    auto pads = [](const phylo::ScenePattern& p) {
+        std::vector<phylo::SceneNote> out;
+        for (const auto& n : p.notes)
+            if (n.note >= 48)
+                out.push_back(n);
+        return out;
+    };
+    CHECK(pads(a).size() == pads(b).size());
+    for (std::size_t i = 0; i < pads(a).size(); ++i)
+        CHECK(pads(a)[i].note == pads(b)[i].note);
+}
+
+TEST(generator_tension_adds_a_seventh_to_triads)
+{
+    std::string low = kGenScene;
+    low.replace(low.find("macro tension 0.7"), 17, "macro tension 0.1");
+    const auto r = phylo::parseScene(low);
+    const auto take = phylo::generateTake(r.scene);
+    // With low tension, each bar has exactly three pad notes on its downbeat.
+    int padsOnBar0 = 0;
+    for (const auto& n : take.notes)
+        if (n.beat == 0.0 && n.note >= 48)
+            ++padsOnBar0;
+    CHECK(padsOnBar0 == 3);
+
+    const auto high = takeFrom(kGenScene);
+    int highPads = 0;
+    for (const auto& n : high.notes)
+        if (n.beat == 0.0 && n.note >= 48)
+            ++highPads;
+    CHECK(highPads == 4);
+}
+
+TEST(scene_chords_seed_and_generate_parse)
+{
+    const auto r = phylo::parseScene(kGenScene);
+    CHECK(r.ok());
+    CHECK(r.scene.chords.size() == 4);
+    CHECK(r.scene.chords[0].rootPitchClass == 9);
+    CHECK(r.scene.chords[0].quality == phylo::ChordQuality::Minor);
+    CHECK(r.scene.chords[1].rootPitchClass == 5);
+    CHECK(r.scene.chords[1].quality == phylo::ChordQuality::Major);
+    CHECK(r.scene.seed == 7);
+    CHECK(r.scene.generate.size() == 2);
+    CHECK(phylo::hasGeneratedTake(r.scene));
+}
+
+TEST(scene_chord_symbols_cover_the_qualities)
+{
+    const auto r = phylo::parseScene("chords C Cm C7 Cm7 Cmaj7 Cdim Bbm F#\n");
+    CHECK(r.ok());
+    CHECK(r.scene.chords.size() == 8);
+    CHECK(r.scene.chords[2].quality == phylo::ChordQuality::Dominant7);
+    CHECK(r.scene.chords[3].quality == phylo::ChordQuality::Minor7);
+    CHECK(r.scene.chords[4].quality == phylo::ChordQuality::Major7);
+    CHECK(r.scene.chords[5].quality == phylo::ChordQuality::Diminished);
+    CHECK(r.scene.chords[6].rootPitchClass == 10);
+    CHECK(r.scene.chords[7].rootPitchClass == 6);
+}
+
+TEST(scene_rejects_bad_chords_seed_and_generate)
+{
+    CHECK(!phylo::parseScene("chords C H\n").ok());
+    CHECK(!phylo::parseScene("chords\n").ok());
+    CHECK(!phylo::parseScene("chords C\nchords G\n").ok());
+    CHECK(!phylo::parseScene("seed -1\n").ok());
+    CHECK(!phylo::parseScene("seed 1.5\n").ok());
+    CHECK(!phylo::parseScene("seed 4294967296\n").ok());
+    CHECK(!phylo::parseScene("generate lead\nchords C\n").ok());
+    CHECK(!phylo::parseScene("generate pad\n").ok()); // no chords line
+    CHECK(!phylo::parseScene("chords C\ngenerate\n").ok());
+
+    const auto r = phylo::parseScene("generate pad\n");
+    CHECK(!r.ok());
+    CHECK(r.errors.front().line == 1);
+}
+
+TEST(generator_without_a_generate_line_makes_no_take)
+{
+    const auto r = phylo::parseScene("chords C G\n");
+    CHECK(r.ok());
+    CHECK(!phylo::hasGeneratedTake(r.scene));
 }
 
 // ---------------------------------------------------------------------------

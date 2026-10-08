@@ -71,6 +71,44 @@ bool isKeyRoot(const std::string& s)
     return false;
 }
 
+// Parses a chord symbol: a root letter with optional # or b, then one of
+// "" (major), "m", "7", "m7", "maj7", "dim".
+bool parseChord(const std::string& token, SceneChord& out)
+{
+    if (token.empty() || !isNoteLetter(token[0]))
+        return false;
+
+    static const int kPitchClass[7] = {9, 11, 0, 2, 4, 5, 7}; // A B C D E F G
+    int pc = kPitchClass[token[0] - 'A'];
+    std::size_t i = 1;
+    if (i < token.size() && (token[i] == '#' || token[i] == 'b'))
+    {
+        pc += (token[i] == '#') ? 1 : -1;
+        ++i;
+    }
+    pc = ((pc % 12) + 12) % 12;
+
+    const std::string quality = token.substr(i);
+    if (quality.empty())
+        out.quality = ChordQuality::Major;
+    else if (quality == "m")
+        out.quality = ChordQuality::Minor;
+    else if (quality == "7")
+        out.quality = ChordQuality::Dominant7;
+    else if (quality == "m7")
+        out.quality = ChordQuality::Minor7;
+    else if (quality == "maj7")
+        out.quality = ChordQuality::Major7;
+    else if (quality == "dim")
+        out.quality = ChordQuality::Diminished;
+    else
+        return false;
+
+    out.rootPitchClass = pc;
+    out.symbol = token;
+    return true;
+}
+
 // Old Mac (CR-only) and Windows (CRLF) line endings become LF.
 std::string normaliseLineEndings(const std::string& text)
 {
@@ -304,6 +342,74 @@ ParseResult parseScene(const std::string& text)
             else
                 scene.macros.push_back({words[1], v, lineNo});
         }
+        else if (keyword == "chords")
+        {
+            if (words.size() < 2 || words.size() > 17)
+            {
+                error(lineNo, "chords needs 1 to 16 chord symbols, one per bar");
+            }
+            else if (!scene.chords.empty())
+            {
+                error(lineNo, "duplicate chords line");
+            }
+            else
+            {
+                bool allValid = true;
+                for (std::size_t i = 1; i < words.size(); ++i)
+                {
+                    SceneChord chord;
+                    chord.line = lineNo;
+                    if (!parseChord(words[i], chord))
+                    {
+                        error(lineNo, "not a chord: " + words[i] + " (use e.g. C, Am, F7, Bbm7, Cmaj7, Gdim)");
+                        allValid = false;
+                    }
+                    else
+                    {
+                        scene.chords.push_back(chord);
+                    }
+                }
+                if (!allValid)
+                    scene.chords.clear();
+            }
+        }
+        else if (keyword == "seed")
+        {
+            double value = 0.0;
+            if (words.size() != 2 || !parseDouble(words[1], value) || value < 0.0 || value > 4294967295.0 ||
+                std::floor(value) != value)
+                error(lineNo, "seed needs a whole number from 0 to 4294967295");
+            else
+                scene.seed = static_cast<std::uint32_t>(value);
+        }
+        else if (keyword == "generate")
+        {
+            if (words.size() < 2)
+            {
+                error(lineNo, "generate needs one or more voices: pad, bass");
+            }
+            else if (!scene.generate.empty())
+            {
+                error(lineNo, "duplicate generate line");
+            }
+            else
+            {
+                bool allValid = true;
+                for (std::size_t i = 1; i < words.size(); ++i)
+                {
+                    if (words[i] != "pad" && words[i] != "bass")
+                    {
+                        error(lineNo, "unknown voice: " + words[i] + " (voices are pad and bass)");
+                        allValid = false;
+                    }
+                }
+                if (allValid)
+                {
+                    scene.generate.assign(words.begin() + 1, words.end());
+                    scene.generateLine = lineNo;
+                }
+            }
+        }
         else if (keyword == "pattern")
         {
             double length = 0.0;
@@ -346,6 +452,9 @@ ParseResult parseScene(const std::string& text)
     // Cross-checks that need the whole file.
     if (!scene.activePattern.empty() && scene.findPattern(scene.activePattern) == nullptr)
         error(activeLine, "play refers to an unknown pattern: " + scene.activePattern);
+
+    if (!scene.generate.empty() && scene.chords.empty())
+        error(scene.generateLine, "generate needs a chords line to follow");
 
     for (const auto& s : scene.sections)
         for (std::size_t i = 0; i < s.play.size(); ++i)
