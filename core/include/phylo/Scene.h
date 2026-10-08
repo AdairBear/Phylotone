@@ -7,6 +7,9 @@
 //   key C minor         // parsed and stored; not used for generation yet
 //   play bass           // the pattern the track plays
 //   macro density 0.5   // a named control, 0 to 1
+//   chords Cm Ab Eb Bb  // one chord per bar, 1 to 16 bars; the take loops over them
+//   seed 7              // generator seed, 0 to 4294967295
+//   generate pad bass   // generated voices; replaces the `play` pattern
 //
 //   pattern bass 4      // name, length in beats
 //     0    C2 100 0.5   // beat, note (number or name), velocity, duration in beats
@@ -17,11 +20,13 @@
 //
 // Comments start with //. Indented lines belong to the block above them.
 // Sections are parsed and validated; arrangement playback is M6.
+// Generated takes are described in phylo/Generator.h.
 
 #pragma once
 
 #include "phylo/Sequencer.h"
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -59,6 +64,16 @@ struct SceneError
     std::string message;
 };
 
+enum class ChordQuality { Major, Minor, Dominant7, Minor7, Major7, Diminished };
+
+struct SceneChord
+{
+    int rootPitchClass = 0; // 0 = C ... 11 = B
+    ChordQuality quality = ChordQuality::Major;
+    std::string symbol;     // as written, e.g. "Bb" or "F#m7"
+    int line = 0;
+};
+
 struct SceneMacro
 {
     std::string name;
@@ -77,6 +92,11 @@ struct Scene
     std::vector<SceneMacro> macros;
     std::vector<ScenePattern> patterns;
     std::vector<SceneSection> sections;
+
+    std::vector<SceneChord> chords;     // one per bar; empty if no `chords` line
+    std::uint32_t seed = 1;             // from `seed`
+    std::vector<std::string> generate;  // voices from `generate`; empty if none
+    int generateLine = 0;
 
     const ScenePattern* findPattern(const std::string& name) const;
     const SceneMacro* findMacro(const std::string& name) const;

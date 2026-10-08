@@ -1,5 +1,9 @@
 #include "MainComponent.h"
 
+#include "phylo/Generator.h"
+
+#include <optional>
+
 namespace
 {
 constexpr int kMarginPx = 16;
@@ -138,18 +142,27 @@ void MainComponent::applyScene(const phylo::Scene& next)
     engine.setMeter(next.meter);
     tempoSlider.setValue(next.tempo, juce::dontSendNotification);
 
-    // Only send the pattern when its content changed, so an unrelated edit
-    // does not restart the loop.
-    const auto* newActive = next.activePattern.empty() ? nullptr : next.findPattern(next.activePattern);
-    const auto* oldActive = scene.activePattern.empty() ? nullptr : scene.findPattern(scene.activePattern);
-    const bool changed = newActive != nullptr &&
-                         (oldActive == nullptr || !phylo::samePattern(*newActive, *oldActive));
+    // The track is either a generated take or the play-line pattern. Only send it
+    // when its content changed, so an unrelated edit does not restart the loop.
+    std::optional<phylo::ScenePattern> take;
+    if (phylo::hasGeneratedTake(next))
+        take = phylo::generateTake(next);
+    else if (!next.activePattern.empty())
+        if (const auto* p = next.findPattern(next.activePattern))
+            take = *p;
+
+    const bool changed = take.has_value() && (!sentTake.has_value() || !phylo::samePattern(*take, *sentTake));
     if (changed)
-        engine.setPattern(phylo::buildPattern(*newActive));
+    {
+        engine.setPattern(phylo::buildPattern(*take));
+        sentTake = take;
+    }
 
     scene = next;
     juce::String message = "Scene: " + sceneFile.getFileName() + " loaded";
-    if (next.activePattern.empty())
+    if (phylo::hasGeneratedTake(next))
+        message += changed ? " (generated take on next bar)" : " (take unchanged)";
+    else if (next.activePattern.empty())
         message += " (no play line, pattern unchanged)";
     else if (changed)
         message += " (pattern " + juce::String(next.activePattern) + " on next bar)";
