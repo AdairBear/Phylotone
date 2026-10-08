@@ -32,3 +32,8 @@ if(PHYLO_BUILD_TESTS)
     )
     add_test(NAME phylo_core COMMAND phylo_core_tests)
 endif()
+
+option(PHYLO_BUILD_PROVIDERS "Build the assistant chat-provider adapters (fetches nlohmann/json)" OFF)
+if(PHYLO_BUILD_PROVIDERS)
+    add_subdirectory(app/providers)
+endif()
