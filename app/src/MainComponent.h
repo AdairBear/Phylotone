@@ -1,5 +1,7 @@
 #pragma once
 
+#include "AssistantController.h"
+#include "AssistantPanel.h"
 #include "PlaybackEngine.h"
 
 #include "phylo/Scene.h"
@@ -46,6 +48,11 @@ private:
     juce::TextButton refreshButton { "Refresh" };
     juce::Label sceneLabel;
     juce::Label statusLabel;
+
+    // Declared after the scene members and before the panel: the panel holds a
+    // reference to the controller, so it must be destroyed first.
+    AssistantController assistantController;
+    AssistantPanel assistantPanel { assistantController };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MainComponent)
 };

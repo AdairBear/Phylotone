@@ -9,12 +9,16 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 add_library(phylo_core STATIC
     core/src/Sequencer.cpp
     core/src/Scene.cpp
+    core/src/Json.cpp
+    core/src/Assistant.cpp
 )
 target_include_directories(phylo_core PUBLIC core/include)
 target_compile_options(phylo_core PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-Wall -Wextra -Wpedantic>
     $<$<CXX_COMPILER_ID:MSVC>:/W4>
 )
+
+enable_testing()
 
 option(PHYLO_BUILD_APP "Build the Standalone app (fetches JUCE)" OFF)
 if(PHYLO_BUILD_APP)
@@ -23,7 +27,6 @@ endif()
 
 option(PHYLO_BUILD_TESTS "Build the core unit tests" ON)
 if(PHYLO_BUILD_TESTS)
-    enable_testing()
     add_executable(phylo_core_tests tests/core/test_core.cpp)
     target_link_libraries(phylo_core_tests PRIVATE phylo_core)
     target_compile_options(phylo_core_tests PRIVATE
@@ -31,4 +34,9 @@ if(PHYLO_BUILD_TESTS)
         $<$<CXX_COMPILER_ID:MSVC>:/W4>
     )
     add_test(NAME phylo_core COMMAND phylo_core_tests)
+endif()
+
+option(PHYLO_BUILD_PROVIDERS "Build the assistant chat-provider adapters (fetches nlohmann/json)" OFF)
+if(PHYLO_BUILD_PROVIDERS)
+    add_subdirectory(app/providers)
 endif()

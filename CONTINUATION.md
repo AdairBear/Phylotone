@@ -75,3 +75,20 @@
 - 2026-10-07: M0 core merged (PR #1). M0 app shell and CI on `m0-app-shell`.
   Known limits are listed under "Where we are".
 - 2026-10-07: M1 first cut on `m1-scene`: scene parser, next-bar pattern changes, scene file watch.
+- 2026-10-08: M2 core on `m2-assistant`. Provider-neutral chat interface
+  (`core/include/phylo/assistant/ChatProvider.h`). Provider adapters for Claude,
+  OpenAI, Gemini and OpenAI-compatible local servers in `app/providers`, verified
+  against handwritten wire-format JSON only. Assistant core (tools, Off/Ask/Assist
+  modes, action log with undo, stale-proposal guard, turn loop) with 51 core
+  tests. Decision: the model is a user choice across vendors, not a fixed one.
+  Keys come from environment variables, never from the project folder.
+- 2026-10-08: M2 app panel on `m2-assistant`. Provider choice (Claude, OpenAI,
+  Gemini, Local), model name, base URL, and mode (Off, Ask, Assist; default Ask).
+  Settings file holds no keys. Requests run on a background thread, one at a time.
+  Linux builds use libcurl, since JUCE's own Linux networking is HTTP only.
+  Known gaps: the scene file is written once per turn, not after each change;
+  approval and rejection are not reported back to the model; a slow local model
+  can hit the 60 s timeout.
+  Not verified: a live chat with any provider. No keys or network here.
+  Accept check (M2) still needs a person: change the bass rhythm, hear it land on
+  the next bar, then undo it.

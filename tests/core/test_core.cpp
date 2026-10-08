@@ -4,6 +4,8 @@
 // returns non-zero if any check failed, so ctest picks it up.
 
 #include "phylo/Scene.h"
+#include "phylo/assistant/Assistant.h"
+#include "phylo/assistant/Json.h"
 #include "phylo/Sequencer.h"
 
 #include <algorithm>
@@ -809,6 +811,331 @@ TEST(scene_accepts_cr_only_line_endings)
         CHECK(std::abs(r.scene.tempo - 100.0) < 1e-9);
         CHECK_EQ(r.scene.patterns[0].notes.size(), 1u);
     }
+}
+
+// ---------------------------------------------------------------------------
+// JSON reader (M2)
+
+TEST(json_parses_nested_values_and_escapes)
+{
+    phylo::json::Value v;
+    std::string err;
+    const bool ok = phylo::json::parse(
+        R"({"a":1.5,"b":"x\"y\n\u00e9","c":[true,false,null],"d":{"e":-2e1}})", v, err);
+    CHECK(ok);
+    CHECK(err.empty());
+    if (ok)
+    {
+        CHECK(v.get("a") != nullptr && std::abs(v.get("a")->number - 1.5) < 1e-12);
+        CHECK(v.get("b") != nullptr && v.get("b")->str == "x\"y\n\xC3\xA9");
+        CHECK(v.get("c") != nullptr && v.get("c")->items.size() == 3u);
+        CHECK(v.get("d") != nullptr && v.get("d")->get("e") != nullptr &&
+              std::abs(v.get("d")->get("e")->number + 20.0) < 1e-12);
+        CHECK(v.get("missing") == nullptr);
+    }
+}
+
+TEST(json_rejects_malformed_input)
+{
+    const char* bad[] = {"", "{", "[1,]", "{\"a\" 1}", "\"unterminated", "{} trailing", "nan", "01x", "\"\\q\""};
+    for (const char* text : bad)
+    {
+        phylo::json::Value v;
+        std::string err;
+        if (phylo::json::parse(text, v, err))
+            std::printf("  FAIL [%s] accepted: %s\n", gCurrent, text);
+        CHECK(!phylo::json::parse(text, v, err));
+    }
+}
+
+TEST(json_quote_round_trips)
+{
+    const std::string raw = "line1\nquote\" back\\slash \x01 tab\t";
+    phylo::json::Value v;
+    std::string err;
+    CHECK(phylo::json::parse("{\"s\":" + phylo::json::quote(raw) + "}", v, err));
+    CHECK(v.get("s") != nullptr && v.get("s")->str == raw);
+}
+
+// ---------------------------------------------------------------------------
+// Assistant (M2)
+
+namespace
+{
+using namespace phylo::assistant;
+
+const char* kScene =
+    "tempo 120\n"
+    "meter 4\n"
+    "play bass\n"
+    "macro density 0.5\n"
+    "pattern bass 4\n"
+    "  0 C2 100 0.5\n"
+    "  2 G2 90 0.5\n"
+    "pattern lead 4\n"
+    "  0 C4 80 1\n";
+
+ToolCall call(const std::string& name, const std::string& args, const std::string& id = "c1")
+{
+    ToolCall c;
+    c.id = id;
+    c.name = name;
+    c.argsJson = args;
+    return c;
+}
+
+// Returns scripted responses in order. Records how many requests it saw.
+class FakeProvider : public ChatProvider
+{
+public:
+    std::vector<ChatResponse> script;
+    std::size_t calls = 0;
+    std::string name() const override { return "fake"; }
+    ChatResponse complete(const ChatRequest&) override
+    {
+        ++calls;
+        if (script.empty())
+        {
+            ChatResponse r;
+            r.error = "script exhausted";
+            return r;
+        }
+        ChatResponse r = script.front();
+        script.erase(script.begin());
+        return r;
+    }
+};
+
+ChatResponse textReply(const std::string& text)
+{
+    ChatResponse r;
+    r.ok = true;
+    r.text = text;
+    return r;
+}
+
+ChatResponse toolReply(const ToolCall& c)
+{
+    ChatResponse r;
+    r.ok = true;
+    r.toolCalls.push_back(c);
+    return r;
+}
+} // namespace
+
+TEST(off_mode_reads_but_refuses_changes)
+{
+    ProjectState p{kScene, Mode::Off};
+    ActionLog log;
+    Assistant a(p, log);
+    CHECK(a.invoke(call("read_project", "{}")).ok);
+    CHECK(a.invoke(call("explain_scene", "{}")).ok);
+    const auto r = a.invoke(call("set_macro", R"({"name":"density","value":0.9,"reason":"test"})"));
+    CHECK(!r.ok && !r.applied && !r.proposed);
+    CHECK(p.sceneText == kScene);
+    CHECK(log.entries().empty());
+}
+
+TEST(ask_mode_proposes_then_approve_applies_and_logs)
+{
+    ProjectState p{kScene, Mode::Ask};
+    ActionLog log;
+    Assistant a(p, log);
+
+    const auto r = a.invoke(call("set_macro", R"({"name":"density","value":0.9,"reason":"more density"})"));
+    CHECK(r.ok && r.proposed && !r.applied);
+    CHECK(p.sceneText == kScene);
+    CHECK_EQ(a.proposals().size(), 1u);
+
+    const auto ap = a.approve(r.proposalId);
+    CHECK(ap.ok && ap.applied);
+    CHECK(p.sceneText.find("macro density 0.9") != std::string::npos);
+    CHECK_EQ(log.entries().size(), 1u);
+    if (!log.entries().empty())
+    {
+        CHECK(log.entries()[0].reason == "more density");
+        CHECK(log.entries()[0].beforeText == kScene);
+        CHECK(log.entries()[0].afterText == p.sceneText);
+    }
+    CHECK(a.proposals().empty());
+}
+
+TEST(assist_mode_applies_low_risk_and_holds_destructive)
+{
+    ProjectState p{kScene, Mode::Assist};
+    ActionLog log;
+    Assistant a(p, log);
+
+    const auto low = a.invoke(call("set_macro", R"({"name":"density","value":0.2,"reason":"thinner"})"));
+    CHECK(low.ok && low.applied);
+    CHECK_EQ(log.entries().size(), 1u);
+
+    // Removing the lead pattern is destructive: held for approval.
+    const std::string noLead = "tempo 120\nmeter 4\nplay bass\nmacro density 0.2\npattern bass 4\n  0 C2 100 0.5\n  2 G2 90 0.5\n";
+    const std::string args = R"({"scene":)" + phylo::json::quote(noLead) + R"(,"reason":"drop lead"})";
+    const auto del = a.invoke(call("edit_scene", args));
+    CHECK(del.ok && del.proposed && !del.applied);
+    CHECK_EQ(log.entries().size(), 1u);
+
+    // Adding a note is not destructive: applied.
+    const std::string more = std::string(kScene) + "  3 D2 70 0.25\n";
+    const auto add = a.invoke(call("edit_scene", R"({"scene":)" + phylo::json::quote(more) + R"(,"reason":"add a note"})"));
+    CHECK(add.ok && add.applied);
+}
+
+TEST(edit_scene_rejects_text_that_does_not_parse)
+{
+    ProjectState p{kScene, Mode::Assist};
+    ActionLog log;
+    Assistant a(p, log);
+    const std::string bad = "tempo nan\n";
+    const auto r = a.invoke(call("edit_scene", R"({"scene":)" + phylo::json::quote(bad) + R"(,"reason":"x"})"));
+    CHECK(!r.ok && !r.applied && !r.proposed);
+    CHECK(p.sceneText == kScene);
+    CHECK(log.entries().empty());
+}
+
+TEST(undo_reverts_in_order_and_stops_when_empty)
+{
+    ProjectState p{kScene, Mode::Assist};
+    ActionLog log;
+    Assistant a(p, log);
+    a.invoke(call("set_macro", R"({"name":"density","value":0.1,"reason":"one"})"));
+    a.invoke(call("set_macro", R"({"name":"density","value":0.2,"reason":"two"})"));
+    CHECK_EQ(log.entries().size(), 2u);
+
+    CHECK(a.invoke(call("undo", R"({"reason":"revert two"})")).applied);
+    CHECK(p.sceneText.find("macro density 0.1") != std::string::npos);
+    CHECK(a.invoke(call("undo", R"({"reason":"revert one"})")).applied);
+    CHECK(p.sceneText == kScene);
+    CHECK(!a.invoke(call("undo", R"({"reason":"nothing"})")).ok);
+}
+
+TEST(stale_proposal_is_refused_and_keeps_manual_edits)
+{
+    ProjectState p{kScene, Mode::Ask};
+    ActionLog log;
+    Assistant a(p, log);
+    const auto r = a.invoke(call("set_macro", R"({"name":"density","value":0.9,"reason":"proposal"})"));
+    CHECK(r.proposed);
+
+    // The musician edits the scene by hand after the proposal was made.
+    p.sceneText += "pattern extra 2\n  0 A3 60 0.5\n";
+    const std::string manual = p.sceneText;
+
+    const auto ap = a.approve(r.proposalId);
+    CHECK(!ap.ok && !ap.applied);
+    CHECK(p.sceneText == manual);
+    CHECK(log.entries().empty());
+}
+
+TEST(explain_scene_describes_patterns_and_range)
+{
+    ProjectState p{kScene, Mode::Ask};
+    ActionLog log;
+    Assistant a(p, log);
+    const auto r = a.invoke(call("explain_scene", "{}"));
+    CHECK(r.ok);
+    CHECK(r.resultJson.find("Tempo 120") != std::string::npos);
+    CHECK(r.resultJson.find("bass") != std::string::npos);
+    CHECK(r.resultJson.find("C2") != std::string::npos);
+}
+
+TEST(set_macro_adds_a_missing_macro_and_validates_range)
+{
+    ProjectState p{"tempo 120\npattern a 4\n  0 C4 100 1\n", Mode::Assist};
+    ActionLog log;
+    Assistant a(p, log);
+    CHECK(a.invoke(call("set_macro", R"({"name":"space","value":0.25,"reason":"add"})")).applied);
+    CHECK(p.sceneText.find("macro space 0.25") != std::string::npos);
+    CHECK(!a.invoke(call("set_macro", R"({"name":"space","value":1.5,"reason":"bad"})")).ok);
+}
+
+TEST(changes_without_a_reason_are_refused)
+{
+    ProjectState p{kScene, Mode::Assist};
+    ActionLog log;
+    Assistant a(p, log);
+    CHECK(!a.invoke(call("set_macro", R"({"name":"density","value":0.3})")).ok);
+    CHECK(!a.invoke(call("set_macro", R"({"name":"density","value":0.3,"reason":""})")).ok);
+    CHECK(log.entries().empty());
+}
+
+TEST(action_log_serialises_one_valid_json_object_per_line)
+{
+    ProjectState p{kScene, Mode::Assist};
+    ActionLog log;
+    Assistant a(p, log);
+    a.invoke(call("set_macro", R"({"name":"density","value":0.3,"reason":"say \"hi\""})"));
+    const std::string lines = log.toJsonLines();
+    phylo::json::Value v;
+    std::string err;
+    CHECK(phylo::json::parse(lines.substr(0, lines.find('\n')), v, err));
+    CHECK(v.get("reason") != nullptr && v.get("reason")->str == "say \"hi\"");
+}
+
+TEST(session_runs_a_tool_then_answers)
+{
+    ProjectState p{kScene, Mode::Assist};
+    ActionLog log;
+    Assistant a(p, log);
+    FakeProvider fake;
+    fake.script = {
+        toolReply(call("set_macro", R"({"name":"density","value":0.7,"reason":"user asked"})", "t1")),
+        textReply("Done: density is now 0.7."),
+    };
+    Session s(a, fake, "test-model");
+    const auto out = s.send("make it denser");
+    CHECK(out.ok);
+    CHECK(out.text == "Done: density is now 0.7.");
+    CHECK_EQ(out.toolCalls, 1);
+    CHECK(p.sceneText.find("macro density 0.7") != std::string::npos);
+    // user, assistant tool call, tool result, assistant text
+    CHECK_EQ(s.history().size(), 4u);
+    if (s.history().size() == 4)
+        CHECK(s.history()[2].role == Role::Tool && s.history()[2].toolCallId == "t1");
+}
+
+TEST(session_stops_a_provider_that_loops_on_tools)
+{
+    ProjectState p{kScene, Mode::Off};
+    ActionLog log;
+    Assistant a(p, log);
+    FakeProvider fake;
+    for (int i = 0; i < 20; ++i)
+        fake.script.push_back(toolReply(call("read_project", "{}", "r" + std::to_string(i))));
+    Session s(a, fake, "m");
+    const auto out = s.send("loop");
+    CHECK(!out.ok);
+    CHECK(out.error.find("stopped after") != std::string::npos);
+    CHECK_EQ(fake.calls, static_cast<std::size_t>(Session::kMaxToolRounds + 1));
+}
+
+TEST(session_reports_provider_failure)
+{
+    ProjectState p{kScene, Mode::Ask};
+    ActionLog log;
+    Assistant a(p, log);
+    FakeProvider fake;
+    ChatResponse bad;
+    bad.error = "HTTP 401: invalid key";
+    fake.script = {bad};
+    Session s(a, fake, "m");
+    const auto out = s.send("hi");
+    CHECK(!out.ok);
+    CHECK(out.error == "HTTP 401: invalid key");
+}
+
+TEST(scene_macro_directive_parses_and_rejects_duplicates)
+{
+    const auto r = phylo::parseScene("macro density 0.5\nmacro density 0.6\nmacro big 2\n");
+    CHECK(!r.ok());
+    CHECK(hasErrorAt(r, 2));
+    CHECK(hasErrorAt(r, 3));
+    const auto good = phylo::parseScene("macro density 0.5\n");
+    CHECK(good.ok());
+    if (good.ok())
+        CHECK(std::abs(good.scene.macros[0].value - 0.5) < 1e-12);
 }
 
 // ---------------------------------------------------------------------------

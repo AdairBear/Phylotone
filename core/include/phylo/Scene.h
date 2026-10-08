@@ -6,6 +6,7 @@
 //   meter 4             // beats per bar, 1 to 16
 //   key C minor         // parsed and stored; not used for generation yet
 //   play bass           // the pattern the track plays
+//   macro density 0.5   // a named control, 0 to 1
 //
 //   pattern bass 4      // name, length in beats
 //     0    C2 100 0.5   // beat, note (number or name), velocity, duration in beats
@@ -58,6 +59,13 @@ struct SceneError
     std::string message;
 };
 
+struct SceneMacro
+{
+    std::string name;
+    double value = 0.0; // 0 to 1
+    int line = 0;
+};
+
 struct Scene
 {
     double tempo = 120.0;
@@ -66,10 +74,12 @@ struct Scene
     std::string keyRoot;   // e.g. "C", "F#", "Bb"
     bool keyMinor = false;
     std::string activePattern; // from `play <name>` at top level
+    std::vector<SceneMacro> macros;
     std::vector<ScenePattern> patterns;
     std::vector<SceneSection> sections;
 
     const ScenePattern* findPattern(const std::string& name) const;
+    const SceneMacro* findMacro(const std::string& name) const;
 };
 
 struct ParseResult
