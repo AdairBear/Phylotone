@@ -75,3 +75,10 @@
 - 2026-10-07: M0 core merged (PR #1). M0 app shell and CI on `m0-app-shell`.
   Known limits are listed under "Where we are".
 - 2026-10-07: M1 first cut on `m1-scene`: scene parser, next-bar pattern changes, scene file watch.
+- 2026-10-08: M2 core on `m2-assistant`. Provider-neutral chat interface
+  (`core/include/phylo/assistant/ChatProvider.h`). Provider adapters for Claude,
+  OpenAI, Gemini and OpenAI-compatible local servers in `app/providers`, verified
+  against handwritten wire-format JSON only. Assistant core (tools, Off/Ask/Assist
+  modes, action log with undo, stale-proposal guard, turn loop) with 51 core
+  tests. Decision: the model is a user choice across vendors, not a fixed one.
+  Keys come from environment variables, never from the project folder.

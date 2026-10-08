@@ -102,6 +102,14 @@ const ScenePattern* Scene::findPattern(const std::string& name) const
     return nullptr;
 }
 
+const SceneMacro* Scene::findMacro(const std::string& name) const
+{
+    for (const auto& m : macros)
+        if (m.name == name)
+            return &m;
+    return nullptr;
+}
+
 bool parseNoteToken(const std::string& token, int& midi)
 {
     if (token.empty())
@@ -285,6 +293,16 @@ ParseResult parseScene(const std::string& text)
                 scene.activePattern = words[1];
                 activeLine = lineNo;
             }
+        }
+        else if (keyword == "macro")
+        {
+            double v = 0.0;
+            if (words.size() != 3 || !parseDouble(words[2], v) || v < 0.0 || v > 1.0)
+                error(lineNo, "macro needs: macro <name> <value from 0 to 1>");
+            else if (scene.findMacro(words[1]) != nullptr)
+                error(lineNo, "duplicate macro name: " + words[1]);
+            else
+                scene.macros.push_back({words[1], v, lineNo});
         }
         else if (keyword == "pattern")
         {
