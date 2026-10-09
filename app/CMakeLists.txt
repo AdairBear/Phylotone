@@ -40,6 +40,9 @@ target_sources(PhylotoneApp PRIVATE
     src/JuceHttpPost.cpp
     src/AssistantController.cpp
     src/AssistantPanel.cpp
+    src/AudioOutput.cpp
+    src/host/AudioFeed.cpp
+    src/host/OfflineTake.cpp
 )
 
 target_compile_definitions(PhylotoneApp PRIVATE

@@ -21,6 +21,8 @@ public:
     AudioFeed(AudioBlockSink& sink, double sampleRate, std::size_t blockFrames = 512);
 
     // Setters are called from the message thread. They take effect on the next block.
+    // The sample rate is set when the audio device starts, which is when it is known.
+    void setSampleRate(double sampleRate);
     void setTempo(double bpm);
     void setPattern(phylo::Pattern pattern);
     void play();
