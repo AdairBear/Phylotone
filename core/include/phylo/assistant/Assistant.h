@@ -15,6 +15,7 @@
 #include "phylo/assistant/ChatProvider.h"
 #include "phylo/assistant/Json.h"
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -86,6 +87,10 @@ public:
 
     // Runs one tool call under the current mode.
     ToolResult invoke(const ToolCall& call);
+
+    // Called after each change to the scene (an applied edit or an undo), with the new
+    // scene text. Runs on whichever thread made the change.
+    std::function<void(const std::string& sceneText)> onSceneChanged;
 
     const std::vector<Proposal>& proposals() const noexcept { return proposals_; }
 

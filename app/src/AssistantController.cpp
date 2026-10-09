@@ -36,6 +36,8 @@ AssistantController::AssistantController(juce::File scene, juce::File settingsPa
 
     project.mode = settings_.mode;
     syncFromFile();
+    // Every change the assistant makes is written as it happens, not at the end of the turn.
+    assistant.onSceneChanged = [this](const std::string& text) { persistScene(text); };
 }
 
 AssistantController::~AssistantController()
@@ -173,6 +175,7 @@ bool AssistantController::syncFromFile()
     if (isBlank(text))
         return false; // likely a save in progress; keep the current text
     project.sceneText = text.toStdString();
+    lastKnownDisk = project.sceneText;
     return true;
 }
 
@@ -184,27 +187,43 @@ void AssistantController::pollSceneFile()
         syncFromFile();
 }
 
-void AssistantController::writeIfChanged(const std::string& textBefore)
+bool AssistantController::persistScene(const std::string& text)
 {
-    if (project.sceneText == textBefore)
-        return;
+    // Can run on the background thread during a turn, so it touches no UI state.
+    if (text == lastKnownDisk)
+        return true;
 
     const auto onDisk = readSceneFile().toStdString();
-    if (onDisk != textBefore && !isBlank(utf8(onDisk)))
+    if (onDisk != lastKnownDisk && !isBlank(utf8(onDisk)))
     {
-        say("app", "The scene file changed on disk while the assistant was working, so its change "
-                   "was not written. Reloaded the file; ask again if you still want the change.");
-        project.sceneText = onDisk;
-        sceneModified = sceneFile.getLastModificationTime();
-        return;
+        diskConflict = true; // someone else changed the file; do not overwrite it
+        return false;
     }
 
     sceneFile.getParentDirectory().createDirectory();
     // nullptr line endings: write the text exactly as the core produced it.
-    if (!sceneFile.replaceWithText(utf8(project.sceneText), false, false, nullptr))
+    if (!sceneFile.replaceWithText(utf8(text), false, false, nullptr))
     {
+        writeFailed = true;
+        return false;
+    }
+    lastKnownDisk = text;
+    return true;
+}
+
+void AssistantController::reportWriteOutcome()
+{
+    if (diskConflict)
+    {
+        diskConflict = false;
+        say("app", "The scene file changed on disk while the assistant was working, so its change "
+                   "was not written. Reloaded the file; ask again if you still want the change.");
+        syncFromFile();
+    }
+    if (writeFailed)
+    {
+        writeFailed = false;
         say("app", "Could not write " + sceneFile.getFullPathName());
-        return;
     }
     sceneModified = sceneFile.getLastModificationTime();
 }
@@ -227,30 +246,29 @@ bool AssistantController::send(const juce::String& text)
     busy = true;
     notifyChanged();
 
-    std::string textBefore = project.sceneText;
     auto* s = session.get();
     const auto userText = text.trim().toStdString();
     auto flag = alive;
 
-    pool.addJob([this, s, userText, flag, textBefore = std::move(textBefore)]() mutable
+    pool.addJob([this, s, userText, flag]() mutable
     {
         // Background thread: owns project, log, assistant and session until finishTurn.
         auto result = s->send(userText);
         juce::MessageManager::callAsync(
-            [this, flag, result = std::move(result), textBefore = std::move(textBefore)]() mutable
+            [this, flag, result = std::move(result)]() mutable
             {
                 if (*flag)
-                    finishTurn(result, std::move(textBefore));
+                    finishTurn(result);
             });
     });
     return true;
 }
 
-void AssistantController::finishTurn(const phylo::assistant::TurnResult& result, std::string textBefore)
+void AssistantController::finishTurn(const phylo::assistant::TurnResult& result)
 {
     busy = false;
 
-    writeIfChanged(textBefore);
+    reportWriteOutcome();
 
     if (!result.ok)
         say("app", "Error: " + utf8(result.error));
@@ -286,9 +304,8 @@ void AssistantController::approve(int proposalId)
         return;
     syncFromFile();
     const std::string what = describeProposal(proposalId);
-    const auto textBefore = project.sceneText;
     const auto r = assistant.approve(proposalId);
-    writeIfChanged(textBefore);
+    reportWriteOutcome();
     const std::string outcome = r.message.empty() ? std::string(r.ok ? "Approved." : "Could not approve.") : r.message;
     say("app", utf8(outcome));
     if (session != nullptr)
