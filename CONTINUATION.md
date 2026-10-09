@@ -75,7 +75,7 @@
 2. M4: route PlaybackEngine's rendered blocks through `PipelinedRenderer` and an audio
    output, then play the generated take through Akazi XL. Needs a machine with audio out.
 3. M4 accept: play Akazi XL from the generator; kill the host, app keeps running.
-4. M2 hardening, rest: scene write per change; per-provider timeout (local models).
+4. M2 hardening, rest: scene write per change.
 5. M5 mixer and recording.
 
 ## Working rules
@@ -138,3 +138,9 @@
   Still open from M2: the scene file is written per turn, not per change (needs the write
   moved off the background thread, since it calls `say()`); a slow local model can hit the
   60 s timeout (needs a per-provider timeout). Not verified: a live model reading the note.
+- 2026-10-08: PR #12 (M2 hardening, approve/reject notes) merged on Thomas's go-ahead.
+- 2026-10-08: M2 hardening part 2 on `m2-timeout`: the request timeout depends on the provider.
+  `requestTimeoutMs`: 60 s for hosted providers, 5 minutes for Local. Checked in `phylo_app_checks`.
+  Still open from M2: the scene file is written per turn, not per change (needs the write moved
+  off the background thread, since it calls `say()`). Not verified: a slow local model actually
+  finishing inside 5 minutes.

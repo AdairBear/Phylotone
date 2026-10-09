@@ -64,6 +64,13 @@ const char* providerDisplayName(ProviderKind p) noexcept
     return "Anthropic";
 }
 
+int requestTimeoutMs(ProviderKind p) noexcept
+{
+    constexpr int kCloudMs = 60000;
+    constexpr int kLocalMs = 300000;
+    return p == ProviderKind::Local ? kLocalMs : kCloudMs;
+}
+
 const char* providerKeyEnvName(ProviderKind p) noexcept
 {
     switch (p)

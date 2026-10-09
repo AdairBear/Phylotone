@@ -25,6 +25,10 @@ const char* providerDisplayName(ProviderKind p) noexcept;
 // Environment variable the adapter reads its key from; empty for Local.
 const char* providerKeyEnvName(ProviderKind p) noexcept;
 
+// How long one request to the provider may take, in milliseconds. Local models can be
+// much slower than hosted ones, so they get longer.
+int requestTimeoutMs(ProviderKind p) noexcept;
+
 struct AssistantSettings
 {
     static constexpr const char* kDefaultLocalBaseUrl = "http://localhost:11434/v1";

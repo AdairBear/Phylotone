@@ -140,7 +140,7 @@ bool AssistantController::ensureSession()
         return false;
     }
 
-    auto post = makeJuceHttpPost(cancel, kHttpTimeoutMs);
+    auto post = makeJuceHttpPost(cancel, requestTimeoutMs(settings_.provider));
     using namespace phylo::providers;
     switch (settings_.provider)
     {
