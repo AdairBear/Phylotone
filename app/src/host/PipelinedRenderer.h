@@ -6,6 +6,7 @@
 // caller. Invariant: every submitted block is either taken or dropped, never both.
 #pragma once
 
+#include "AudioBlockSink.h"
 #include "PluginHostSupervisor.h"
 
 #include <condition_variable>
@@ -16,7 +17,7 @@
 #include <thread>
 #include <vector>
 
-class PipelinedRenderer
+class PipelinedRenderer : public AudioBlockSink
 {
 public:
     static constexpr std::size_t kMaxQueued = 4;
@@ -28,11 +29,11 @@ public:
     PipelinedRenderer& operator=(const PipelinedRenderer&) = delete;
 
     // Queues a block. Returns false if the queue was full and the block was dropped.
-    bool submit(phylo::host::ProcessRequest block);
+    bool submit(phylo::host::ProcessRequest block) override;
 
     // Copies the oldest finished block into `out`. If none is ready, `out` becomes
     // `samples` zeros and the call returns false. Never waits.
-    bool take(std::vector<float>& out, std::size_t samples);
+    bool take(std::vector<float>& out, std::size_t samples) override;
 
     // Makes the worker kill the host as a crash would (test hook). Takes effect before
     // the next render on the worker.

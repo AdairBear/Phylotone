@@ -20,6 +20,10 @@ struct OfflineTake
     std::vector<std::size_t> noteOnFrames; // absolute frame of each note-on, in order
 };
 
+// Builds one block request from the sequencer's MIDI for that block. Audio is silent in
+// the request; the renderer fills it.
+phylo::host::ProcessRequest buildBlock(const std::vector<phylo::MidiOut>& midi, std::size_t frames);
+
 // Renders `frames` frames of `pattern` at `bpm`. The sequencer emits MIDI with a frame
 // offset in each block; the offsets become absolute frames in noteOnFrames. The
 // sequencer runs on a fixed sample rate, so changing blockFrames must not change the
