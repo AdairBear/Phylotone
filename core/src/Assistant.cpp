@@ -345,6 +345,8 @@ void Assistant::apply(const Plan& p)
         LogEntry undone;
         log.popLast(undone);
         project.sceneText = p.afterText;
+        if (onSceneChanged)
+            onSceneChanged(project.sceneText);
         return;
     }
 
@@ -356,6 +358,8 @@ void Assistant::apply(const Plan& p)
     e.afterText = p.afterText;
     project.sceneText = p.afterText;
     log.append(std::move(e));
+    if (onSceneChanged)
+        onSceneChanged(project.sceneText);
 }
 
 ToolResult Assistant::invoke(const ToolCall& call)

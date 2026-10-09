@@ -84,16 +84,24 @@ private:
     bool syncFromFile();
     juce::String readSceneFile() const;
 
-    // Writes project.sceneText if it differs from `textBefore`, provided the
-    // file still holds `textBefore`. Otherwise reloads from the file.
-    void writeIfChanged(const std::string& textBefore);
+    // Writes `text` to the scene file unless the file has changed on disk since we
+    // last read or wrote it. Safe on the background thread: no UI calls. Sets
+    // diskConflict or writeFailed instead of reporting.
+    bool persistScene(const std::string& text);
 
-    void finishTurn(const phylo::assistant::TurnResult& result, std::string textBefore);
+    // Runs on the message thread once a change is done: reports a conflict or a
+    // failed write, reloading from disk after a conflict.
+    void reportWriteOutcome();
+
+    void finishTurn(const phylo::assistant::TurnResult& result);
     void refreshProposals();
 
     juce::File sceneFile;
     juce::File settingsFile;
     juce::Time sceneModified;
+    std::string lastKnownDisk;   // the scene text as the file held it when we last read or wrote it
+    bool diskConflict = false;   // set by persistScene, reported by reportWriteOutcome
+    bool writeFailed = false;
 
     AssistantSettings settings_;
 

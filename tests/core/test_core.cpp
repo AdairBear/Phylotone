@@ -1102,6 +1102,21 @@ TEST(session_runs_a_tool_then_answers)
         CHECK(s.history()[2].role == Role::Tool && s.history()[2].toolCallId == "t1");
 }
 
+TEST(assistant_reports_each_scene_change)
+{
+    ProjectState p{kScene, Mode::Assist};
+    ActionLog log;
+    Assistant a(p, log);
+    std::vector<std::string> seen;
+    a.onSceneChanged = [&seen](const std::string& text) { seen.push_back(text); };
+    a.invoke(call("set_macro", R"({"name":"density","value":0.7,"reason":"user asked"})", "t1"));
+    CHECK_EQ(seen.size(), 1u);
+    if (seen.size() == 1)
+        CHECK(seen[0] == p.sceneText);
+    a.invoke(call("set_macro", R"({"name":"density","value":0.4,"reason":"user asked"})", "t2"));
+    CHECK_EQ(seen.size(), 2u);
+}
+
 TEST(session_sends_app_actions_with_the_next_user_message)
 {
     ProjectState p{kScene, Mode::Off};

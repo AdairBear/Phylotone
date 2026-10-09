@@ -75,7 +75,7 @@
 2. M4: route PlaybackEngine's rendered blocks through `PipelinedRenderer` and an audio
    output, then play the generated take through Akazi XL. Needs a machine with audio out.
 3. M4 accept: play Akazi XL from the generator; kill the host, app keeps running.
-4. M2 hardening, rest: scene write per change.
+4. M2 is closed in code. Live checks need a person.
 5. M5 mixer and recording.
 
 ## Working rules
@@ -144,3 +144,12 @@
   Still open from M2: the scene file is written per turn, not per change (needs the write moved
   off the background thread, since it calls `say()`). Not verified: a slow local model actually
   finishing inside 5 minutes.
+- 2026-10-08: PR #13 (M2 timeout) merged on Thomas's go-ahead.
+- 2026-10-08: M2 per-change writes on `m2-per-change-write`: `Assistant::onSceneChanged` fires after
+  each applied edit and each undo. The controller writes the scene file at that point through
+  `persistScene`, which does no UI work, so it is safe on the background thread. A conflict or a
+  failed write is recorded and reported on the message thread by `reportWriteOutcome` when the
+  turn ends. Core test `assistant_reports_each_scene_change` passes (72 core checks, 0 failed).
+  Not verified: the controller path, since it needs the UI. A live turn that edits the scene,
+  and a change to the file during a turn, should be tried by hand.
+- M2 is now closed in the code. Remaining checks need a person: the M2 accept check and a live chat.
