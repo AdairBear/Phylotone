@@ -2,6 +2,17 @@
 
 #include <algorithm>
 
+phylo::host::ProcessRequest buildBlock(const std::vector<phylo::MidiOut>& midi, std::size_t frames)
+{
+    phylo::host::ProcessRequest req;
+    req.frames = static_cast<std::uint32_t>(frames);
+    req.channels = 2;
+    req.audio.assign(frames * 2, 0.0f);
+    for (const auto& m : midi)
+        req.midi.push_back({ static_cast<std::uint32_t>(m.sampleOffset), m.status, m.data1, m.data2 });
+    return req;
+}
+
 OfflineTake renderPatternOffline(const phylo::Pattern& pattern, double bpm, int sampleRate,
                                  std::size_t frames, const BlockRenderer& renderBlock,
                                  std::size_t blockFrames)
@@ -25,13 +36,9 @@ OfflineTake renderPatternOffline(const phylo::Pattern& pattern, double bpm, int 
         midi.clear();
         seq.process(static_cast<int>(n), midi);
 
-        phylo::host::ProcessRequest req;
-        req.frames = static_cast<std::uint32_t>(n);
-        req.channels = 2;
-        req.audio.assign(n * 2, 0.0f);
+        const auto req = buildBlock(midi, n);
         for (const auto& m : midi)
         {
-            req.midi.push_back({ static_cast<std::uint32_t>(m.sampleOffset), m.status, m.data1, m.data2 });
             const bool noteOn = (m.status & 0xF0) == 0x90 && m.data2 > 0;
             if (noteOn)
                 take.noteOnFrames.push_back(start + static_cast<std::size_t>(m.sampleOffset));

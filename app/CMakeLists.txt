@@ -109,6 +109,17 @@ target_link_libraries(phylo_offline_take_check PRIVATE phylo_core Threads::Threa
 add_dependencies(phylo_offline_take_check phylo-plughost)
 add_test(NAME phylo_offline_take COMMAND phylo_offline_take_check $<TARGET_FILE:phylo-plughost>)
 
+# Headless check of the audio feed (M4): chunking, offline match, dropped blocks, stop.
+# Uses a synchronous fake sink. Plain C++, no JUCE.
+add_executable(phylo_audio_feed_check
+    src/host/AudioFeedCheck.cpp
+    src/host/AudioFeed.cpp
+    src/host/OfflineTake.cpp
+)
+target_include_directories(phylo_audio_feed_check PRIVATE src/host)
+target_link_libraries(phylo_audio_feed_check PRIVATE phylo_core)
+add_test(NAME phylo_audio_feed COMMAND phylo_audio_feed_check)
+
 # Headless check of the assistant settings file format (no JUCE).
 add_executable(phylo_app_checks
     src/AssistantSettings.cpp
