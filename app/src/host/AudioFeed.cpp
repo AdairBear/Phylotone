@@ -19,10 +19,19 @@ void AudioFeed::setTempo(double bpm)
     seq_.setTempo(bpm);
 }
 
+void AudioFeed::setMeter(int beatsPerBar)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    seq_.setMeter(beatsPerBar);
+}
+
 void AudioFeed::setPattern(phylo::Pattern pattern)
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    seq_.setPattern(std::move(pattern));
+    if (seq_.isPlaying())
+        seq_.scheduleNextBar(std::move(pattern));
+    else
+        seq_.setPattern(std::move(pattern));
 }
 
 void AudioFeed::play()

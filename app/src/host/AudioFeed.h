@@ -24,6 +24,8 @@ public:
     // The sample rate is set when the audio device starts, which is when it is known.
     void setSampleRate(double sampleRate);
     void setTempo(double bpm);
+    void setMeter(int beatsPerBar);
+    // While playing, the new pattern lands on the next bar, as on the MIDI path.
     void setPattern(phylo::Pattern pattern);
     void play();
     void stop();
