@@ -71,10 +71,11 @@
 - Open decisions are listed at the end of CONTRACT.md.
 
 ## Next
-1. Review and merge the M4 Play path PR (`m4-play-path`), on Thomas's go-ahead.
+1. Review and merge the lock-free control PR (`m4-lockfree-feed`), on Thomas's go-ahead.
 2. M4 sound check: set `Documents/Phylotone/playback.txt` (or `PHYLO_PLUGHOST` and `PHYLO_PLUGIN`),
-   turn on Plugin audio, press Play. Kill the host; the app keeps running.
-3. M4 lock-free handoff in `AudioFeed` (the audio thread currently takes a mutex shared with the setters).
+   turn on Plugin audio, press Play. Kill the host; the app keeps running. Needs a person.
+3. M4 audio-thread leftovers: `PipelinedRenderer::submit/take` take a mutex shared with the worker;
+   the feed's buffers and the pattern free in `applyControls` still allocate or free on the audio thread.
 4. M5 app side (levels, pan, master bus, record in the UI) on the same output.
 5. M2 is closed in code. Live checks need a person.
 
@@ -169,3 +170,11 @@
   are shown on a status line and the toggle stays off. Check `phylo_playback_settings` passes; ctest 8/8;
   the app target builds. Not verified: sound through a device (no audio device here), the Release host,
   or live playback.
+- 2026-10-09: PR #21 (M4 Play path) merged on Thomas's go-ahead. CI was green on all six checks.
+- 2026-10-09: M4 lock-free control on `m4-lockfree-feed`: `AudioFeed` setters (sample rate, tempo,
+  meter, play, stop, pattern) write atomics, last write wins; the audio thread applies them at the
+  start of each pull. Pattern handoff is an atomic pointer; the message thread frees an unclaimed
+  pattern. The feed takes no lock on the audio thread. Still on that path: the sink's mutex and
+  buffer growth/pattern free (listed in Next). Checks: `phylo_audio_feed_check` adds last-write-wins
+  and a control-thread churn test; ctest 8/8; the feed check also passes under ThreadSanitizer with
+  no reports. Not verified: sound through a device.
