@@ -21,16 +21,19 @@ AudioFeed::~AudioFeed()
 void AudioFeed::setSampleRate(double sampleRate)
 {
     sampleRate_.store(sampleRate, std::memory_order_release);
+    controlSerial_.fetch_add(1, std::memory_order_acq_rel);
 }
 
 void AudioFeed::setTempo(double bpm)
 {
     tempo_.store(bpm, std::memory_order_release);
+    controlSerial_.fetch_add(1, std::memory_order_acq_rel);
 }
 
 void AudioFeed::setMeter(int beatsPerBar)
 {
     meter_.store(beatsPerBar, std::memory_order_release);
+    controlSerial_.fetch_add(1, std::memory_order_acq_rel);
 }
 
 void AudioFeed::setPattern(phylo::Pattern pattern)
@@ -58,25 +61,15 @@ std::size_t AudioFeed::droppedBlocks() const
 
 void AudioFeed::applyControls()
 {
-    const double rate = sampleRate_.load(std::memory_order_acquire);
-    if (rate != appliedSampleRate_)
+    // The serial changes on every tempo, meter or rate write. Reading the values only when it
+    // moved avoids comparing doubles; a write that lands during the read bumps it again.
+    const std::size_t serial = controlSerial_.load(std::memory_order_acquire);
+    if (serial != appliedSerial_)
     {
-        seq_.setSampleRate(rate);
-        appliedSampleRate_ = rate;
-    }
-
-    const double bpm = tempo_.load(std::memory_order_acquire);
-    if (bpm != appliedTempo_)
-    {
-        seq_.setTempo(bpm);
-        appliedTempo_ = bpm;
-    }
-
-    const int meter = meter_.load(std::memory_order_acquire);
-    if (meter != appliedMeter_)
-    {
-        seq_.setMeter(meter);
-        appliedMeter_ = meter;
+        seq_.setSampleRate(sampleRate_.load(std::memory_order_acquire));
+        seq_.setTempo(tempo_.load(std::memory_order_acquire));
+        seq_.setMeter(meter_.load(std::memory_order_acquire));
+        appliedSerial_ = serial;
     }
 
     // A pattern is taken before the transport changes, so a pattern and a play in the same

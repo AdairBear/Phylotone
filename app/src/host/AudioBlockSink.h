@@ -16,7 +16,7 @@ public:
     // Queues a block. Returns false if the block was dropped.
     virtual bool submit(phylo::host::ProcessRequest block) = 0;
 
-    // Copies the oldest finished block into `out`, or `samples` zeros if none is ready.
+    // Moves the oldest finished block into `out`, or `samples` zeros if none is ready.
     // Never waits.
     virtual bool take(std::vector<float>& out, std::size_t samples) = 0;
 };
