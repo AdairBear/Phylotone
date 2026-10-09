@@ -7,6 +7,12 @@ AudioFeed::AudioFeed(AudioBlockSink& sink, double sampleRate, std::size_t blockF
     seq_.setSampleRate(sampleRate);
 }
 
+void AudioFeed::setSampleRate(double sampleRate)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    seq_.setSampleRate(sampleRate);
+}
+
 void AudioFeed::setTempo(double bpm)
 {
     std::lock_guard<std::mutex> lock(mutex_);
