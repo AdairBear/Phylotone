@@ -78,7 +78,7 @@ bool PluginHostSupervisor::ensureRunning()
     }
 
     Frame frame;
-    if (!awaitFrame(MsgType::Hello, kReplyTimeoutMs, frame))
+    if (!awaitFrame(MsgType::Hello, kStartTimeoutMs, frame))
     {
         fail("host did not say hello");
         return false;
@@ -87,7 +87,7 @@ bool PluginHostSupervisor::ensureRunning()
     if (!pluginPath_.empty())
     {
         const auto load = phylo::host::encodeFrame(MsgType::Load, phylo::host::encodeText(pluginPath_));
-        if (!pipe_.writeAll(load.data(), load.size()) || !awaitFrame(MsgType::Loaded, kReplyTimeoutMs, frame))
+        if (!pipe_.writeAll(load.data(), load.size()) || !awaitFrame(MsgType::Loaded, kStartTimeoutMs, frame))
         {
             fail(error_.empty() ? "host did not confirm the plugin load" : error_);
             return false;
