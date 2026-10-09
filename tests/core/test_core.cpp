@@ -1576,6 +1576,162 @@ TEST(wire_hello_audio_and_text_round_trip)
 // ---------------------------------------------------------------------------
 // Runner
 
+
+#include "phylo/Mixer.h"
+#include "phylo/Wav.h"
+#include <cmath>
+#include <cstdio>
+
+namespace {
+
+bool near(float a, float b, float tol = 1e-6f)
+{
+    return std::fabs(a - b) <= tol;
+}
+
+// A deterministic mono test tone: no randomness, so two renders are identical.
+std::vector<float> tone(double hz, double sampleRate, std::size_t frames, float amp)
+{
+    std::vector<float> v(frames);
+    for (std::size_t i = 0; i < frames; ++i)
+        v[i] = static_cast<float>(amp * std::sin(2.0 * 3.14159265358979323846 * hz * static_cast<double>(i) / sampleRate));
+    return v;
+}
+
+} // namespace
+
+TEST(mixer_equal_power_centre_pan)
+{
+    phylo::Mixer m(1);
+    std::vector<std::vector<float>> in = { { 1.0f, 0.5f } };
+    std::vector<float> out;
+    m.mix(in, 2, out);
+    // Centre: each side gets cos(pi/4) = sin(pi/4), so left^2 + right^2 == 1.
+    CHECK(near(out[0], 0.70710678f, 1e-5f));
+    CHECK(near(out[1], 0.70710678f, 1e-5f));
+    CHECK(near(out[2], 0.35355339f, 1e-5f));
+    CHECK(near(out[0] * out[0] + out[1] * out[1], 1.0f, 1e-5f));
+}
+
+TEST(mixer_hard_pan_and_clamp)
+{
+    phylo::Mixer m(2);
+    m.setPan(0, -1.0f);
+    m.setPan(1, 7.0f); // clamped to +1
+    std::vector<float> out;
+    // Track 0 alone, hard left: all of it on the left, none on the right.
+    m.mix({ { 1.0f }, { 0.0f } }, 1, out);
+    CHECK(near(out[0], 1.0f));
+    CHECK(near(out[1], 0.0f));
+    // Track 1 alone, hard right (pan clamped from 7.0): none on the left.
+    m.mix({ { 0.0f }, { 1.0f } }, 1, out);
+    CHECK(near(out[0], 0.0f));
+    CHECK(near(out[1], 1.0f));
+}
+
+TEST(mixer_gain_mute_and_master)
+{
+    phylo::Mixer m(2);
+    m.setPan(0, -1.0f);
+    m.setPan(1, -1.0f);
+    m.setGain(0, 0.5f);
+    m.setMute(1, true);
+    m.setMasterGain(2.0f);
+    std::vector<std::vector<float>> in = { { 1.0f }, { 1.0f } };
+    std::vector<float> out;
+    m.mix(in, 1, out);
+    CHECK(near(out[0], 1.0f));  // 1.0 * 0.5 gain * 2.0 master
+    CHECK(near(out[1], 0.0f));  // muted track is silent
+    CHECK(near(phylo::dbToGain(0.0f), 1.0f));
+    CHECK(near(phylo::dbToGain(-6.0206f), 0.5f, 1e-4f));
+}
+
+TEST(mixer_ignores_bad_indices_and_missing_blocks)
+{
+    phylo::Mixer m(1);
+    m.setGain(5, 0.0f); // out of range: ignored, no crash
+    m.setPan(9, 1.0f);
+    std::vector<std::vector<float>> none;
+    std::vector<float> out;
+    m.mix(none, 4, out);
+    CHECK_EQ(out.size(), 8u);
+    CHECK(near(out[0], 0.0f) && near(out[7], 0.0f));
+}
+
+TEST(wav_float_round_trip_is_exact)
+{
+    std::vector<float> s = { 0.1f, -0.2f, 3.5f, -1e-7f, 0.0f, 1.0f };
+    const char* path = "phylo_wav_roundtrip.wav";
+    CHECK(phylo::writeWavFloat(path, s, 2, 48000));
+    std::vector<float> back;
+    int ch = 0, rate = 0;
+    CHECK(phylo::readWavFloat(path, back, ch, rate));
+    CHECK_EQ(ch, 2);
+    CHECK_EQ(rate, 48000);
+    CHECK(back == s);
+    std::remove(path);
+}
+
+TEST(wav_rejects_bad_input)
+{
+    std::vector<float> s = { 1.0f, 2.0f, 3.0f };
+    CHECK(!phylo::writeWavFloat("phylo_wav_bad.wav", s, 2, 48000)); // 3 samples, 2 channels
+    std::vector<float> back;
+    int ch = 0, rate = 0;
+    CHECK(!phylo::readWavFloat("phylo_wav_does_not_exist.wav", back, ch, rate));
+}
+
+TEST(take_recorded_then_rendered_again_matches_bit_for_bit)
+{
+    // The M5 accept check, on the parts that exist now: a deterministic mix of two tones,
+    // rendered offline twice, then recorded and read back.
+    const double sr = 48000.0;
+    const std::size_t blocks = 40, blockFrames = 512;
+    const auto tone440 = tone(440.0, sr, blocks * blockFrames, 0.5f);
+    const auto tone220 = tone(220.0, sr, blocks * blockFrames, 0.25f);
+
+    auto render = [&](phylo::TakeRecorder* rec) {
+        phylo::Mixer m(2);
+        m.setPan(0, -0.5f);
+        m.setGain(0, 0.8f);
+        m.setPan(1, 0.5f);
+        std::vector<float> all;
+        std::vector<float> block;
+        if (rec)
+            rec->begin(2, 48000);
+        for (std::size_t b = 0; b < blocks; ++b)
+        {
+            std::vector<std::vector<float>> in(2);
+            in[0].assign(tone440.begin() + b * blockFrames, tone440.begin() + (b + 1) * blockFrames);
+            in[1].assign(tone220.begin() + b * blockFrames, tone220.begin() + (b + 1) * blockFrames);
+            m.mix(in, blockFrames, block);
+            all.insert(all.end(), block.begin(), block.end());
+            if (rec)
+                rec->append(block.data(), blockFrames);
+        }
+        return all;
+    };
+
+    phylo::TakeRecorder rec;
+    const auto first = render(&rec);
+    const auto second = render(nullptr);
+    CHECK(first == second);             // same inputs, same output
+    CHECK(rec.samples() == first);      // the recording is the render
+    CHECK(rec.save("phylo_take.wav"));
+
+    std::vector<float> back;
+    int ch = 0, rate = 0;
+    CHECK(phylo::readWavFloat("phylo_take.wav", back, ch, rate));
+    CHECK(back == first);               // the file is the render, bit for bit
+    CHECK(first.size() == blocks * blockFrames * 2);
+
+    float peak = 0.0f;
+    for (float f : first)
+        peak = std::max(peak, std::fabs(f));
+    CHECK(peak > 0.1f);                 // not silent
+    std::remove("phylo_take.wav");
+}
+
 int main()
 {
     int ran = 0;
