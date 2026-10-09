@@ -71,7 +71,7 @@
 - Open decisions are listed at the end of CONTRACT.md.
 
 ## Next
-1. Review and merge PR for M4 headless render (offline take through Akazi XL), on Thomas's go-ahead.
+1. Review and merge PRs for the host start-timeout fix and the M4 headless render, on Thomas's go-ahead.
 2. Thomas to listen to the take (WAV from the scratch driver) and say whether it sounds right.
    This is the M4 ear check; the numbers only show sound is produced.
 3. M4 app side: route PlaybackEngine's blocks through `PipelinedRenderer` and an audio output.
@@ -158,3 +158,4 @@
 - 2026-10-08: M5 slice 1 on `m5-mixer`: `Mixer` (per-track gain, equal-power pan, mute, master gain; no limiter) in `core/include/phylo/Mixer.h`, and float WAV write/read plus `TakeRecorder` in `core/include/phylo/Wav.h`. Seven new core tests; `phylo_core_tests` reports 79 tests, 0 failed checks, ctest 5/5. Accept check passes at core level: a recorded take, read back and rendered again, matches bit for bit. Not verified: the app wiring (levels, pan and record in the UI) and any audio output.
 - 2026-10-09: PR #15 (M5 slice 1) merged on Thomas's go-ahead. M5 slice 2 on `m5-app-mixer`: core test `mixer_output_does_not_depend_on_block_size` (same input mixed in 512- and 128-frame blocks gives identical samples). 80 core checks, 0 failed; ctest 5/5. The app side of M5 has no audio output to attach to yet, so it waits for M4 playback wiring.
 - 2026-10-09: M4 headless render on `m4-headless-render`. `PluginHostSupervisor::setState` (restores plugin state, 5 s timeout, a refusal keeps the host up). `renderPatternOffline` (app/src/host/OfflineTake): runs the sequencer block by block, sends the MIDI to a renderer callback, and returns the audio and note-on frames. Check `phylo_offline_take_check` (ctest `phylo_offline_take`): note-ons at 0/24000/48000/72000, identical at 48- and 512-frame blocks, silence in, silence out. Real run (scratch driver outside the repo, Akazi XL VST3 in a Debug host): state set, a 4-beat arpeggio rendered as 8 s; note-ons at the right frames; RMS about 0.21, peak 0.32, host Running with no error. NOT verified: how it sounds (WAV sent for an ear check), the Release host, and the playback path (PlaybackEngine not changed).
+- 2026-10-09: PR #17 (M4 headless render) merged on Thomas's go-ahead; Thomas called the render "a very basic sound" with different notes. Host start-timeout fix on `m4-start-timeout`: Hello and Loaded now wait `kStartTimeoutMs` (5 s); audio renders keep `kReplyTimeoutMs` (250 ms). The no-plugin setState now returns "state refused: no plugin loaded" in about 47 ms instead of timing out, and the Akazi XL render is unchanged. ctest 6/6.
