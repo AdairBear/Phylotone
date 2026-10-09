@@ -71,9 +71,9 @@
 - Open decisions are listed at the end of CONTRACT.md.
 
 ## Next
-1. Review and merge PR for M5 slice 1 (mixer and WAV recording), on Thomas's go-ahead.
-2. M5 slice 2: levels, pan and master bus in the app; record master or a track to WAV.
-   Accept: record a take, then an offline render with the same seed matches it within tolerance.
+1. Review and merge PR for M5 slice 2 (block-size independence), on Thomas's go-ahead.
+2. M5 app side (levels, pan, master bus, record to WAV in the UI): needs an audio output,
+   which comes with M4 playback wiring. Needs a machine with audio out.
 3. M4: route PlaybackEngine's rendered blocks through `PipelinedRenderer` and an audio
    output, then play the generated take through Akazi XL. Needs a machine with audio out.
 4. M4 accept: play Akazi XL from the generator; kill the host, app keeps running.
@@ -155,3 +155,4 @@
   and a change to the file during a turn, should be tried by hand.
 - M2 is now closed in the code. Remaining checks need a person: the M2 accept check and a live chat.
 - 2026-10-08: M5 slice 1 on `m5-mixer`: `Mixer` (per-track gain, equal-power pan, mute, master gain; no limiter) in `core/include/phylo/Mixer.h`, and float WAV write/read plus `TakeRecorder` in `core/include/phylo/Wav.h`. Seven new core tests; `phylo_core_tests` reports 79 tests, 0 failed checks, ctest 5/5. Accept check passes at core level: a recorded take, read back and rendered again, matches bit for bit. Not verified: the app wiring (levels, pan and record in the UI) and any audio output.
+- 2026-10-09: PR #15 (M5 slice 1) merged on Thomas's go-ahead. M5 slice 2 on `m5-app-mixer`: core test `mixer_output_does_not_depend_on_block_size` (same input mixed in 512- and 128-frame blocks gives identical samples). 80 core checks, 0 failed; ctest 5/5. The app side of M5 has no audio output to attach to yet, so it waits for M4 playback wiring.
