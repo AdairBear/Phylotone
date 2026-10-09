@@ -71,13 +71,14 @@
 - Open decisions are listed at the end of CONTRACT.md.
 
 ## Next
-1. Review and merge PR for M5 slice 2 (block-size independence), on Thomas's go-ahead.
-2. M5 app side (levels, pan, master bus, record to WAV in the UI): needs an audio output,
-   which comes with M4 playback wiring. Needs a machine with audio out.
-3. M4: route PlaybackEngine's rendered blocks through `PipelinedRenderer` and an audio
-   output, then play the generated take through Akazi XL. Needs a machine with audio out.
+1. Review and merge PR for M4 headless render (offline take through Akazi XL), on Thomas's go-ahead.
+2. Thomas to listen to the take (WAV from the scratch driver) and say whether it sounds right.
+   This is the M4 ear check; the numbers only show sound is produced.
+3. M4 app side: route PlaybackEngine's blocks through `PipelinedRenderer` and an audio output.
+   Needs a machine with audio out.
 4. M4 accept: play Akazi XL from the generator; kill the host, app keeps running.
-5. M2 is closed in code. Live checks need a person.
+5. M5 app side (levels, pan, master bus, record in the UI): needs the same audio output.
+6. M2 is closed in code. Live checks need a person.
 
 ## Working rules
 - New work goes on a branch with a pull request. Thomas reviews and merges.
@@ -156,3 +157,4 @@
 - M2 is now closed in the code. Remaining checks need a person: the M2 accept check and a live chat.
 - 2026-10-08: M5 slice 1 on `m5-mixer`: `Mixer` (per-track gain, equal-power pan, mute, master gain; no limiter) in `core/include/phylo/Mixer.h`, and float WAV write/read plus `TakeRecorder` in `core/include/phylo/Wav.h`. Seven new core tests; `phylo_core_tests` reports 79 tests, 0 failed checks, ctest 5/5. Accept check passes at core level: a recorded take, read back and rendered again, matches bit for bit. Not verified: the app wiring (levels, pan and record in the UI) and any audio output.
 - 2026-10-09: PR #15 (M5 slice 1) merged on Thomas's go-ahead. M5 slice 2 on `m5-app-mixer`: core test `mixer_output_does_not_depend_on_block_size` (same input mixed in 512- and 128-frame blocks gives identical samples). 80 core checks, 0 failed; ctest 5/5. The app side of M5 has no audio output to attach to yet, so it waits for M4 playback wiring.
+- 2026-10-09: M4 headless render on `m4-headless-render`. `PluginHostSupervisor::setState` (restores plugin state, 5 s timeout, a refusal keeps the host up). `renderPatternOffline` (app/src/host/OfflineTake): runs the sequencer block by block, sends the MIDI to a renderer callback, and returns the audio and note-on frames. Check `phylo_offline_take_check` (ctest `phylo_offline_take`): note-ons at 0/24000/48000/72000, identical at 48- and 512-frame blocks, silence in, silence out. Real run (scratch driver outside the repo, Akazi XL VST3 in a Debug host): state set, a 4-beat arpeggio rendered as 8 s; note-ons at the right frames; RMS about 0.21, peak 0.32, host Running with no error. NOT verified: how it sounds (WAV sent for an ear check), the Release host, and the playback path (PlaybackEngine not changed).

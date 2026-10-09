@@ -23,12 +23,18 @@ public:
 
     static constexpr int kReplyTimeoutMs = 250;
     static constexpr int kRestartCooldownMs = 1000;
+    static constexpr int kStateTimeoutMs = 5000; // restoring a state can be slow
 
     PluginHostSupervisor(std::string hostExecutable, std::string pluginPath);
 
     // Renders one block. `in.audio` is planar input of channels x frames. `out`
     // receives planar output of the same size, silence if the host is unavailable.
     void render(const phylo::host::ProcessRequest& in, std::vector<float>& out);
+
+    // Restores the plugin's state from raw bytes (for example a sample path for Akazi XL).
+    // Returns false, with lastError() set, if the host is unavailable or refused the state.
+    // The host stays up when it refuses; only a broken or silent host is marked failed.
+    bool setState(const std::vector<std::uint8_t>& bytes);
 
     State state() const noexcept { return state_; }
     const std::string& lastError() const noexcept { return error_; }
