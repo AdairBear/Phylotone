@@ -1732,6 +1732,38 @@ TEST(take_recorded_then_rendered_again_matches_bit_for_bit)
     std::remove("phylo_take.wav");
 }
 
+TEST(mixer_output_does_not_depend_on_block_size)
+{
+    // A live recorder and an offline render may use different block sizes, so the same
+    // input must give the same samples however it is cut into blocks.
+    const double sr = 48000.0;
+    const std::size_t frames = 4096;
+    const auto a = tone(440.0, sr, frames, 0.5f);
+    const auto b = tone(330.0, sr, frames, 0.3f);
+
+    auto render = [&](std::size_t blockFrames) {
+        phylo::Mixer m(2);
+        m.setPan(0, -0.7f);
+        m.setPan(1, 0.4f);
+        m.setGain(1, 0.6f);
+        std::vector<float> all, block;
+        for (std::size_t f = 0; f < frames; f += blockFrames)
+        {
+            std::vector<std::vector<float>> in(2);
+            in[0].assign(a.begin() + f, a.begin() + f + blockFrames);
+            in[1].assign(b.begin() + f, b.begin() + f + blockFrames);
+            m.mix(in, blockFrames, block);
+            all.insert(all.end(), block.begin(), block.end());
+        }
+        return all;
+    };
+
+    const auto wide = render(512);
+    const auto narrow = render(128);
+    CHECK_EQ(wide.size(), frames * 2);
+    CHECK(wide == narrow);
+}
+
 int main()
 {
     int ran = 0;
