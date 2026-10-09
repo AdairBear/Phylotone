@@ -71,11 +71,10 @@
 - Open decisions are listed at the end of CONTRACT.md.
 
 ## Next
-1. Review and merge PR for the M4 device output (`m4-device-output`), on Thomas's go-ahead.
-2. M4 wiring: a Play path in the app that builds PipelinedRenderer (plugin host and Akazi XL paths
-   from settings), AudioFeed and AudioOutput, and starts them. Needs the plugin paths to be set.
-3. M4 sound check: Thomas plays the generator through Akazi XL on a machine with audio out.
-   Kill the host; the app keeps running.
+1. Review and merge the M4 Play path PR (`m4-play-path`), on Thomas's go-ahead.
+2. M4 sound check: set `Documents/Phylotone/playback.txt` (or `PHYLO_PLUGHOST` and `PHYLO_PLUGIN`),
+   turn on Plugin audio, press Play. Kill the host; the app keeps running.
+3. M4 lock-free handoff in `AudioFeed` (the audio thread currently takes a mutex shared with the setters).
 4. M5 app side (levels, pan, master bus, record in the UI) on the same output.
 5. M2 is closed in code. Live checks need a person.
 
@@ -160,3 +159,13 @@
 - 2026-10-09: PR #17 (M4 headless render) merged on Thomas's go-ahead; Thomas called the render "a very basic sound" with different notes. Host start-timeout fix on `m4-start-timeout`: Hello and Loaded now wait `kStartTimeoutMs` (5 s); audio renders keep `kReplyTimeoutMs` (250 ms). The no-plugin setState now returns "state refused: no plugin loaded" in about 47 ms instead of timing out, and the Akazi XL render is unchanged. ctest 6/6.
 - 2026-10-09: Host start-timeout fix on `m4-start-timeout` (PR #18): Hello and Loaded wait 5 s; audio renders keep 250 ms. The no-plugin setState now answers "state refused: no plugin loaded" in about 47 ms. M4 audio feed on `m4-playback-audio`: `AudioBlockSink` (submit and take, no waiting; PipelinedRenderer implements it), `AudioFeed::pull` (sequencer blocks of 512 frames, one take per submit, silence for a dropped block, the stream keeps its length), `buildBlock` shared with the offline render. Check `phylo_audio_feed_check` (ctest `phylo_audio_feed`): odd-sized pulls match one long pull; matches the offline render; a refused block is silence; no note-ons after stop. ctest 7/7. Not verified: the device callback, real sound through the app.
 - 2026-10-09: PR #18 (host start timeout) and PR #19 (M4 audio feed) merged on Thomas's go-ahead. #19 conflicted with #18 in CONTINUATION.md; merged the base into the branch and resolved it, then ctest 7/7 and CI green. M4 device output on `m4-device-output`: `AudioOutput` (JUCE): opens the default stereo output and calls `AudioFeed::pull` from the device callback; sets the feed's sample rate when the device starts (`AudioFeed::setSampleRate`). Builds in the app target (PhylotoneApp). Not wired into the UI yet, so the app behaves as before. Not verified: sound through a device (no audio device here). Known: `AudioFeed::pull` takes a mutex on the audio thread, shared with the message thread; the hold times are short, but a lock-free handoff is the proper fix before live use.
+- 2026-10-09: M4 Play path on `m4-play-path`. Plugin settings in `app/src/PlaybackSettings.*`:
+  `Documents/Phylotone/playback.txt` (keys `plughost`, `plugin`); empty values fall back to
+  `PHYLO_PLUGHOST` and `PHYLO_PLUGIN`; the file wins. The file is created with commented
+  instructions on first launch. `MainComponent` has a "Plugin audio" toggle beside Play and Stop.
+  On first use it builds `PipelinedRenderer` (supervisor for the host and plugin), `AudioFeed` and
+  `AudioOutput`. Play and Stop also drive the feed; tempo, meter and pattern go to the feed on the
+  same path as the MIDI engine. The MIDI output is unchanged. Missing paths or a failed device open
+  are shown on a status line and the toggle stays off. Check `phylo_playback_settings` passes; ctest 8/8;
+  the app target builds. Not verified: sound through a device (no audio device here), the Release host,
+  or live playback.

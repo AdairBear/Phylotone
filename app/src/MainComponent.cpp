@@ -1,7 +1,14 @@
 #include "MainComponent.h"
 
+#include "AudioOutput.h"
+#include "PlaybackSettings.h"
+#include "host/AudioFeed.h"
+#include "host/PipelinedRenderer.h"
+
 #include "phylo/Generator.h"
 
+#include <cstddef>
+#include <cstdlib>
 #include <optional>
 
 namespace
@@ -9,6 +16,14 @@ namespace
 constexpr int kMarginPx = 16;
 constexpr int kRowHeightPx = 32;
 constexpr int kScenePollMs = 250;
+constexpr double kFeedSampleRateHz = 48000.0; // replaced by the device rate when it starts
+constexpr std::size_t kFeedBlockFrames = 512;
+
+const char* kPlaybackTemplate =
+    "# Plugin audio settings. Fill in both lines, then turn on Plugin audio in the app.\n"
+    "# Any line left empty is read from PHYLO_PLUGHOST and PHYLO_PLUGIN instead.\n"
+    "# plughost=/path/to/phylo-plughost\n"
+    "# plugin=/path/to/Akazi XL.vst3\n";
 
 const char* kDefaultScene =
     "// Phylotone scene. Save this file while the app runs and the change\n"
@@ -36,6 +51,13 @@ juce::File assistantSettingsLocation()
         .getChildFile("Phylotone")
         .getChildFile("assistant.settings");
 }
+
+juce::File playbackSettingsLocation()
+{
+    return juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
+        .getChildFile("Phylotone")
+        .getChildFile("playback.txt");
+}
 } // namespace
 
 MainComponent::MainComponent()
@@ -51,8 +73,23 @@ MainComponent::MainComponent()
     titleLabel.setText("Phylotone", juce::dontSendNotification);
     titleLabel.setFont(juce::FontOptions(22.0f, juce::Font::bold));
 
-    playButton.onClick = [this] { engine.play(); updateStatus(); };
-    stopButton.onClick = [this] { engine.stop(); updateStatus(); };
+    playButton.onClick = [this]
+    {
+        engine.play();
+        playing = true;
+        if (feed)
+            feed->play();
+        updateStatus();
+    };
+    stopButton.onClick = [this]
+    {
+        engine.stop();
+        playing = false;
+        if (feed)
+            feed->stop();
+        updateStatus();
+    };
+    pluginAudioToggle.onClick = [this] { setPluginAudio(pluginAudioToggle.getToggleState()); };
     refreshButton.onClick = [this] { refreshOutputs(); };
 
     tempoLabel.setText("Tempo", juce::dontSendNotification);
@@ -60,17 +97,24 @@ MainComponent::MainComponent()
     tempoSlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 64, 24);
     tempoSlider.setRange(40.0, 240.0, 1.0);
     tempoSlider.setValue(engine.tempo(), juce::dontSendNotification);
-    tempoSlider.onValueChange = [this] { engine.setTempo(tempoSlider.getValue()); };
+    tempoSlider.onValueChange = [this]
+    {
+        engine.setTempo(tempoSlider.getValue());
+        if (feed)
+            feed->setTempo(tempoSlider.getValue());
+    };
 
     outputLabel.setText("MIDI out", juce::dontSendNotification);
     outputBox.onChange = [this] { selectOutput(outputBox.getSelectedId()); };
 
     sceneLabel.setJustificationType(juce::Justification::centredLeft);
     statusLabel.setJustificationType(juce::Justification::centredLeft);
+    pluginLabel.setJustificationType(juce::Justification::centredLeft);
 
     addAndMakeVisible(titleLabel);
     addAndMakeVisible(playButton);
     addAndMakeVisible(stopButton);
+    addAndMakeVisible(pluginAudioToggle);
     addAndMakeVisible(tempoLabel);
     addAndMakeVisible(tempoSlider);
     addAndMakeVisible(outputLabel);
@@ -78,8 +122,10 @@ MainComponent::MainComponent()
     addAndMakeVisible(refreshButton);
     addAndMakeVisible(sceneLabel);
     addAndMakeVisible(statusLabel);
+    addAndMakeVisible(pluginLabel);
     addAndMakeVisible(assistantPanel);
 
+    loadPlaybackSettings();
     refreshOutputs();
     reloadSceneIfChanged();
     startTimer(kScenePollMs);
@@ -89,6 +135,91 @@ MainComponent::MainComponent()
 MainComponent::~MainComponent()
 {
     stopTimer();
+    // Close the device before the feed and the renderer it reads from are destroyed.
+    if (audio)
+        audio->close();
+}
+
+void MainComponent::loadPlaybackSettings()
+{
+    const auto file = playbackSettingsLocation();
+    PlaybackSettings fromFile;
+    if (file.existsAsFile())
+    {
+        fromFile = parsePlaybackSettings(file.loadFileAsString().toStdString());
+    }
+    else
+    {
+        file.getParentDirectory().createDirectory();
+        file.replaceWithText(kPlaybackTemplate);
+    }
+
+    playbackSettings = resolvePlaybackSettings(fromFile, std::getenv("PHYLO_PLUGHOST"), std::getenv("PHYLO_PLUGIN"));
+}
+
+void MainComponent::setPluginAudio(bool on)
+{
+    pluginError = {};
+
+    if (!on)
+    {
+        if (audio)
+            audio->close();
+        if (feed)
+            feed->stop();
+        pluginAudioToggle.setToggleState(false, juce::dontSendNotification);
+        updateStatus();
+        return;
+    }
+
+    if (!playbackSettings.complete())
+        pluginError = "Set plughost and plugin in Documents/Phylotone/playback.txt";
+    else if (!juce::File(playbackSettings.pluginHost).existsAsFile())
+        pluginError = "Plugin host not found: " + juce::String(playbackSettings.pluginHost);
+    else if (!juce::File(playbackSettings.plugin).exists())
+        pluginError = "Plugin not found: " + juce::String(playbackSettings.plugin);
+
+    if (pluginError.isNotEmpty())
+    {
+        pluginAudioToggle.setToggleState(false, juce::dontSendNotification);
+        updateStatus();
+        return;
+    }
+
+    // Built on first use, so nothing runs (no host, no device) until it is asked for.
+    if (!renderer)
+    {
+        renderer = std::make_unique<PipelinedRenderer>(
+            std::make_unique<PluginHostSupervisor>(playbackSettings.pluginHost, playbackSettings.plugin));
+        feed = std::make_unique<AudioFeed>(*renderer, kFeedSampleRateHz, kFeedBlockFrames);
+        audio = std::make_unique<AudioOutput>(*feed);
+        pushToFeed();
+    }
+
+    const auto error = audio->open();
+    if (error.isNotEmpty())
+    {
+        pluginError = "Audio device: " + error;
+        pluginAudioToggle.setToggleState(false, juce::dontSendNotification);
+        updateStatus();
+        return;
+    }
+
+    // If the transport is already playing, start the plugin audio from the top of the pattern.
+    if (playing)
+        feed->play();
+    pluginAudioToggle.setToggleState(true, juce::dontSendNotification);
+    updateStatus();
+}
+
+void MainComponent::pushToFeed()
+{
+    if (!feed)
+        return;
+    feed->setTempo(scene.tempo);
+    feed->setMeter(scene.meter);
+    if (sentTake.has_value())
+        feed->setPattern(phylo::buildPattern(*sentTake));
 }
 
 void MainComponent::timerCallback()
@@ -140,6 +271,11 @@ void MainComponent::applyScene(const phylo::Scene& next)
     // Tempo and meter take effect at once; they do not wait for a bar.
     engine.setTempo(next.tempo);
     engine.setMeter(next.meter);
+    if (feed)
+    {
+        feed->setTempo(next.tempo);
+        feed->setMeter(next.meter);
+    }
     tempoSlider.setValue(next.tempo, juce::dontSendNotification);
 
     // The track is either a generated take or the play-line pattern. Only send it
@@ -155,6 +291,8 @@ void MainComponent::applyScene(const phylo::Scene& next)
     if (changed)
     {
         engine.setPattern(phylo::buildPattern(*take));
+        if (feed)
+            feed->setPattern(phylo::buildPattern(*take));
         sentTake = take;
     }
 
@@ -215,6 +353,19 @@ void MainComponent::updateStatus()
     const juce::String transport = engine.isPlaying() ? "Playing" : "Stopped";
     statusLabel.setText(transport + "  |  " + (name.isEmpty() ? "no MIDI output" : "out: " + name),
                         juce::dontSendNotification);
+
+    juce::String pluginText;
+    if (pluginError.isNotEmpty())
+        pluginText = pluginError;
+    else if (audio && audio->isRunning())
+    {
+        pluginText = "Plugin audio on: " + audio->deviceName();
+        if (feed && feed->droppedBlocks() > 0)
+            pluginText += "  |  dropped blocks: " + juce::String(static_cast<int>(feed->droppedBlocks()));
+    }
+    else
+        pluginText = "Plugin audio off";
+    pluginLabel.setText(pluginText, juce::dontSendNotification);
 }
 
 void MainComponent::paint(juce::Graphics& g)
@@ -233,6 +384,8 @@ void MainComponent::resized()
     playButton.setBounds(transportRow.removeFromLeft(96));
     transportRow.removeFromLeft(8);
     stopButton.setBounds(transportRow.removeFromLeft(96));
+    transportRow.removeFromLeft(16);
+    pluginAudioToggle.setBounds(transportRow.removeFromLeft(160));
     area.removeFromTop(kMarginPx / 2);
 
     auto tempoRow = area.removeFromTop(kRowHeightPx);
@@ -249,6 +402,7 @@ void MainComponent::resized()
 
     sceneLabel.setBounds(area.removeFromTop(kRowHeightPx));
     statusLabel.setBounds(area.removeFromTop(kRowHeightPx));
+    pluginLabel.setBounds(area.removeFromTop(kRowHeightPx));
     area.removeFromTop(kMarginPx);
 
     assistantPanel.setBounds(area);

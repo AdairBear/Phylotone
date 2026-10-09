@@ -41,8 +41,12 @@ target_sources(PhylotoneApp PRIVATE
     src/AssistantController.cpp
     src/AssistantPanel.cpp
     src/AudioOutput.cpp
+    src/PlaybackSettings.cpp
     src/host/AudioFeed.cpp
     src/host/OfflineTake.cpp
+    src/host/PipelinedRenderer.cpp
+    src/host/PluginHostSupervisor.cpp
+    src/host/ProcessPipe.cpp
 )
 
 target_compile_definitions(PhylotoneApp PRIVATE
@@ -122,6 +126,13 @@ add_executable(phylo_audio_feed_check
 target_include_directories(phylo_audio_feed_check PRIVATE src/host)
 target_link_libraries(phylo_audio_feed_check PRIVATE phylo_core)
 add_test(NAME phylo_audio_feed COMMAND phylo_audio_feed_check)
+
+# Headless check of the playback settings file and environment fallback. Plain C++.
+add_executable(phylo_playback_settings_check
+    src/PlaybackSettingsCheck.cpp
+    src/PlaybackSettings.cpp
+)
+add_test(NAME phylo_playback_settings COMMAND phylo_playback_settings_check)
 
 # Headless check of the assistant settings file format (no JUCE).
 add_executable(phylo_app_checks
