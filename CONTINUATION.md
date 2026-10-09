@@ -71,10 +71,12 @@
 - Open decisions are listed at the end of CONTRACT.md.
 
 ## Next
-1. Thomas reviews and edits CONTRACT.md.
-2. Settle the open decisions that block M0 (name, plugin hosting approach).
-3. Finish M0: app shell with play/stop and MIDI out, then CI on all three platforms.
-4. M0 hardening pass, then a note here.
+1. Review and merge PR for M4 slice 6 (pipelined renderer), on Thomas's go-ahead.
+2. M4: route PlaybackEngine's rendered blocks through `PipelinedRenderer` and an audio
+   output, then play the generated take through Akazi XL. Needs a machine with audio out.
+3. M4 accept: play Akazi XL from the generator; kill the host, app keeps running.
+4. M2 hardening (scene write per change, approve/reject reporting, 60 s timeout).
+5. M5 mixer and recording.
 
 ## Working rules
 - New work goes on a branch with a pull request. Thomas reviews and merges.
@@ -122,3 +124,10 @@
   cross-platform identical output. Decision: the generated take replaces the
   `play` pattern when a `generate` line is present.
 - 2026-10-08: M4 slice 5 on `m4-state`: GetState/State and SetState/StateResult on the host wire protocol (raw plugin state bytes; `Host::getState`/`setState` in `phylo-plughost`). Core test for the new frames and the refused unknown types. Verified: Akazi XL loaded in the host, state read (882 bytes), `sourcePath` pointed at a 440 Hz WAV inside the processor payload, then a held note gave RMS 0.23 and peak 0.32 with silence before and after. The driver is a scratch script outside the repo. Not verified: generator-to-plugin playback; the supervisor is still not wired into PlaybackEngine.
+- 2026-10-08: PR #10 (M4 slice 5, plugin state) merged on Thomas's go-ahead.
+- 2026-10-08: M4 slice 6 on `m4-playback`: `PipelinedRenderer` (app/src/host). Runs the
+  supervisor on a worker thread. `submit()` and `take()` never wait; a full queue (4)
+  drops the block and counts it. Check `phylo_renderer_check` (ctest
+  `phylo_renderer_pipelined`) passes 30 of 30 runs with a dead host, and under
+  ThreadSanitizer. Not verified: audio output or the Akazi XL render through it
+  (PlaybackEngine not changed yet).
