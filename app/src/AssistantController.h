@@ -69,7 +69,6 @@ public:
     std::function<void(const juce::String& who, const juce::String& text)> onTranscript;
     std::function<void()> onStateChanged;
 
-    static constexpr int kHttpTimeoutMs = 60000;
 
 private:
     void say(const juce::String& who, const juce::String& text);

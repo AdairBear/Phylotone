@@ -77,6 +77,14 @@ int main()
               "a key found in the file is not written back");
     }
 
+    // Timeouts: hosted providers 60 s, local models 5 minutes.
+    {
+        check(requestTimeoutMs(ProviderKind::Anthropic) == 60000, "hosted timeout is 60 s");
+        check(requestTimeoutMs(ProviderKind::OpenAI) == 60000, "OpenAI timeout is 60 s");
+        check(requestTimeoutMs(ProviderKind::Gemini) == 60000, "Gemini timeout is 60 s");
+        check(requestTimeoutMs(ProviderKind::Local) == 300000, "local timeout is 5 minutes");
+    }
+
     if (failures == 0)
         std::printf("assistant settings checks passed\n");
     return failures == 0 ? 0 : 1;
