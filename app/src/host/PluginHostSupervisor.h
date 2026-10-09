@@ -24,6 +24,9 @@ public:
     static constexpr int kReplyTimeoutMs = 250;
     static constexpr int kRestartCooldownMs = 1000;
     static constexpr int kStateTimeoutMs = 5000; // restoring a state can be slow
+    // Starting the host and loading a plugin is slow (JUCE init, plugin scan), so it gets
+    // its own, longer timeout. Audio renders keep the short kReplyTimeoutMs.
+    static constexpr int kStartTimeoutMs = 5000;
 
     PluginHostSupervisor(std::string hostExecutable, std::string pluginPath);
 
