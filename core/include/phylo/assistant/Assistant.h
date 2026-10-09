@@ -135,6 +135,11 @@ public:
     // Sends one user message and runs tool calls until the model answers in text.
     TurnResult send(const std::string& userText);
 
+    // Records something the app did that the model should know about (for example,
+    // the user approved or rejected a proposal). It is sent ahead of the next user
+    // message, marked as not coming from the user.
+    void noteAppAction(const std::string& note);
+
     const std::vector<Message>& history() const noexcept { return history_; }
     void clear() { history_.clear(); }
 
@@ -145,6 +150,7 @@ private:
     ChatProvider& provider;
     std::string model;
     std::vector<Message> history_;
+    std::vector<std::string> pendingNotes_;
 };
 
 } // namespace phylo::assistant

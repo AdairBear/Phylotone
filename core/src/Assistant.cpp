@@ -484,12 +484,26 @@ bool Assistant::reject(int proposalId)
 
 Session::Session(Assistant& a, ChatProvider& p, std::string m) : assistant(a), provider(p), model(std::move(m)) {}
 
+void Session::noteAppAction(const std::string& note)
+{
+    pendingNotes_.push_back(note);
+}
+
 TurnResult Session::send(const std::string& userText)
 {
     TurnResult out;
     Message user;
     user.role = Role::User;
     user.text = userText;
+    if (!pendingNotes_.empty())
+    {
+        std::string prefix = "[App notes, not written by the user:";
+        for (const auto& n : pendingNotes_)
+            prefix += "\n- " + n;
+        prefix += "]\n\n";
+        user.text = prefix + userText;
+        pendingNotes_.clear();
+    }
     history_.push_back(user);
 
     for (int round = 0; round <= kMaxToolRounds; ++round)

@@ -892,10 +892,14 @@ class FakeProvider : public ChatProvider
 public:
     std::vector<ChatResponse> script;
     std::size_t calls = 0;
+    std::string lastUserText; // the text of the last user message the provider was sent
     std::string name() const override { return "fake"; }
-    ChatResponse complete(const ChatRequest&) override
+    ChatResponse complete(const ChatRequest& req) override
     {
         ++calls;
+        for (const auto& m : req.messages)
+            if (m.role == Role::User)
+                lastUserText = m.text;
         if (script.empty())
         {
             ChatResponse r;
@@ -1096,6 +1100,25 @@ TEST(session_runs_a_tool_then_answers)
     CHECK_EQ(s.history().size(), 4u);
     if (s.history().size() == 4)
         CHECK(s.history()[2].role == Role::Tool && s.history()[2].toolCallId == "t1");
+}
+
+TEST(session_sends_app_actions_with_the_next_user_message)
+{
+    ProjectState p{kScene, Mode::Off};
+    ActionLog log;
+    Assistant a(p, log);
+    FakeProvider fake;
+    fake.script = { textReply("ok"), textReply("ok again") };
+    Session s(a, fake, "m");
+    s.noteAppAction("The user rejected proposal 2.");
+    s.noteAppAction("The user approved proposal 3.");
+    CHECK(s.send("make it louder").ok);
+    CHECK(fake.lastUserText.find("The user rejected proposal 2.") != std::string::npos);
+    CHECK(fake.lastUserText.find("The user approved proposal 3.") != std::string::npos);
+    CHECK(fake.lastUserText.find("make it louder") != std::string::npos);
+    // Sent once: the next message carries no stale notes.
+    CHECK(s.send("thanks").ok);
+    CHECK(fake.lastUserText == "thanks");
 }
 
 TEST(session_stops_a_provider_that_loops_on_tools)

@@ -75,7 +75,7 @@
 2. M4: route PlaybackEngine's rendered blocks through `PipelinedRenderer` and an audio
    output, then play the generated take through Akazi XL. Needs a machine with audio out.
 3. M4 accept: play Akazi XL from the generator; kill the host, app keeps running.
-4. M2 hardening (scene write per change, approve/reject reporting, 60 s timeout).
+4. M2 hardening, rest: scene write per change; per-provider timeout (local models).
 5. M5 mixer and recording.
 
 ## Working rules
@@ -131,3 +131,10 @@
   `phylo_renderer_pipelined`) passes 30 of 30 runs with a dead host, and under
   ThreadSanitizer. Not verified: audio output or the Akazi XL render through it
   (PlaybackEngine not changed yet).
+- 2026-10-08: PR #11 (M4 slice 6, pipelined renderer) merged on Thomas's go-ahead.
+- 2026-10-08: M2 hardening on `m2-hardening`, part 1: approve and reject are now sent to the
+  model. `Session::noteAppAction` queues a note, which goes ahead of the next user message,
+  marked as not written by the user. Covered by core test `session_sends_app_actions_with_the_next_user_message`.
+  Still open from M2: the scene file is written per turn, not per change (needs the write
+  moved off the background thread, since it calls `say()`); a slow local model can hit the
+  60 s timeout (needs a per-provider timeout). Not verified: a live model reading the note.

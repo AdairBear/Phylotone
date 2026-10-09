@@ -272,15 +272,28 @@ void AssistantController::refreshProposals()
         proposalSnapshot.push_back({ p.id, summarise(p) });
 }
 
+std::string AssistantController::describeProposal(int proposalId) const
+{
+    for (const auto& p : assistant.proposals())
+        if (p.id == proposalId)
+            return juce::String(summarise(p)).toStdString();
+    return "(no such proposal)";
+}
+
 void AssistantController::approve(int proposalId)
 {
     if (busy)
         return;
     syncFromFile();
+    const std::string what = describeProposal(proposalId);
     const auto textBefore = project.sceneText;
     const auto r = assistant.approve(proposalId);
     writeIfChanged(textBefore);
-    say("app", utf8(r.message.empty() ? std::string(r.ok ? "Approved." : "Could not approve.") : r.message));
+    const std::string outcome = r.message.empty() ? std::string(r.ok ? "Approved." : "Could not approve.") : r.message;
+    say("app", utf8(outcome));
+    if (session != nullptr)
+        session->noteAppAction("The user approved proposal " + std::to_string(proposalId) + ": " + what +
+                               " Result: " + outcome);
     refreshProposals();
     notifyChanged();
 }
@@ -289,8 +302,12 @@ void AssistantController::reject(int proposalId)
 {
     if (busy)
         return;
-    say("app", assistant.reject(proposalId) ? "Rejected proposal " + juce::String(proposalId) + "."
-                                            : "No proposal " + juce::String(proposalId) + ".");
+    const std::string what = describeProposal(proposalId);
+    const bool rejected = assistant.reject(proposalId);
+    say("app", rejected ? "Rejected proposal " + juce::String(proposalId) + "."
+                        : "No proposal " + juce::String(proposalId) + ".");
+    if (rejected && session != nullptr)
+        session->noteAppAction("The user rejected proposal " + std::to_string(proposalId) + ": " + what);
     refreshProposals();
     notifyChanged();
 }
