@@ -11,9 +11,12 @@
 #include "AudioFeed.h"
 #include "OfflineTake.h"
 
+#include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <deque>
+#include <thread>
 
 namespace
 {
@@ -167,6 +170,46 @@ int main()
     feedD.stop();
     pullAll(feedD, kTotal * 4, kBlock);
     CHECK(sinkD.noteOns() == before);
+
+    // 5. Control is last-write-wins: two tempo changes before a pull act as the second alone.
+    FakeSink sinkF1;
+    AudioFeed feedF1(sinkF1, kRate, kBlock);
+    feedF1.setTempo(90.0);
+    feedF1.setTempo(140.0);
+    feedF1.setPattern(pattern());
+    feedF1.play();
+    const auto lastWins = pullAll(feedF1, kTotal, kBlock);
+
+    FakeSink sinkF2;
+    AudioFeed feedF2(sinkF2, kRate, kBlock);
+    feedF2.setTempo(140.0);
+    feedF2.setPattern(pattern());
+    feedF2.play();
+    CHECK(lastWins == pullAll(feedF2, kTotal, kBlock));
+
+    // 6. Control from another thread while the audio side pulls: no crash, no drops from
+    // the feed's side, and the stream keeps its length. Run under ThreadSanitizer to check
+    // for races.
+    FakeSink sinkG;
+    AudioFeed feedG(sinkG, kRate, kBlock);
+    std::atomic<bool> running{true};
+    std::thread control([&feedG, &running] {
+        for (int i = 0; running.load(); ++i)
+        {
+            feedG.setTempo(90.0 + (i % 60));
+            feedG.setMeter(3 + (i % 2));
+            feedG.setPattern(pattern());
+            if (i % 2 == 0)
+                feedG.play();
+            else
+                feedG.stop();
+        }
+    });
+    const auto churn = pullAll(feedG, kBlock * 200, kBlock);
+    running = false;
+    control.join();
+    CHECK(churn.size() == kBlock * 200 * 2);
+    CHECK(feedG.droppedBlocks() == 0);
 
     if (failures == 0)
         std::printf("audio feed check: all passed\n");
