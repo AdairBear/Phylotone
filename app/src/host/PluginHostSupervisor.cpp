@@ -143,6 +143,35 @@ void PluginHostSupervisor::render(const phylo::host::ProcessRequest& in, std::ve
     out = std::move(audio);
 }
 
+bool PluginHostSupervisor::setState(const std::vector<std::uint8_t>& bytes)
+{
+    if (!ensureRunning())
+        return false;
+
+    const auto request = phylo::host::encodeFrame(MsgType::SetState, bytes);
+    if (!pipe_.writeAll(request.data(), request.size()))
+    {
+        fail("host pipe broke while sending the state");
+        return false;
+    }
+
+    Frame frame;
+    if (!awaitFrame(MsgType::StateResult, kStateTimeoutMs, frame))
+    {
+        fail(error_.empty() ? "host did not answer the state in time" : error_);
+        return false;
+    }
+
+    std::string text;
+    phylo::host::decodeText(frame.payload, text);
+    if (!text.empty())
+    {
+        error_ = "state refused: " + text;
+        return false;
+    }
+    return true;
+}
+
 void PluginHostSupervisor::killHostForTesting()
 {
     // State stays Running: the crash is found by the next render, as in real life.

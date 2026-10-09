@@ -96,6 +96,19 @@ target_link_libraries(phylo_renderer_check PRIVATE phylo_core Threads::Threads)
 add_dependencies(phylo_renderer_check phylo-plughost)
 add_test(NAME phylo_renderer_pipelined COMMAND phylo_renderer_check $<TARGET_FILE:phylo-plughost>)
 
+# Headless check of the offline take renderer (M4): note timing and block-size
+# independence, with a silent renderer. Plain C++, no JUCE.
+add_executable(phylo_offline_take_check
+    src/host/OfflineTakeCheck.cpp
+    src/host/OfflineTake.cpp
+    src/host/PluginHostSupervisor.cpp
+    src/host/ProcessPipe.cpp
+)
+target_include_directories(phylo_offline_take_check PRIVATE src/host)
+target_link_libraries(phylo_offline_take_check PRIVATE phylo_core Threads::Threads)
+add_dependencies(phylo_offline_take_check phylo-plughost)
+add_test(NAME phylo_offline_take COMMAND phylo_offline_take_check $<TARGET_FILE:phylo-plughost>)
+
 # Headless check of the assistant settings file format (no JUCE).
 add_executable(phylo_app_checks
     src/AssistantSettings.cpp
