@@ -78,6 +78,7 @@ private:
     void saveSettings();
     void resetSession(const juce::String& why);
     bool ensureSession();
+    std::string describeProposal(int proposalId) const;
 
     // Reads the file into project.sceneText. An empty file (save in progress)
     // keeps the current text. Returns false if the file could not be read.
