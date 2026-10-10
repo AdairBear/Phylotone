@@ -18,7 +18,10 @@
 #include <array>
 #include <atomic>
 #include <cstddef>
+#include <cstdint>
 #include <memory>
+#include <mutex>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -45,6 +48,12 @@ public:
     // the next render on the worker.
     void requestKillForTesting();
 
+    // Caller side only. Plugin state to restore on the worker before the next render. The
+    // host keeps it and re-sends it after a restart. Not on the audio path.
+    void restoreState(std::vector<std::uint8_t> bytes);
+    // What the last restore did, for the status line. Empty until a restore has been asked for.
+    std::string stateStatus() const;
+
     std::size_t droppedBlocks() const;
     std::size_t takenBlocks() const;
 
@@ -66,5 +75,8 @@ private:
     std::atomic<std::size_t> taken_{0};
     std::atomic<bool> stop_{false};
     std::atomic<bool> killRequested_{false};
+    std::atomic<std::vector<std::uint8_t>*> pendingState_{nullptr}; // owned by whoever holds it
+    mutable std::mutex statusMutex_; // guards stateStatus_; never taken on the audio path
+    std::string stateStatus_;
     std::thread worker_;
 };

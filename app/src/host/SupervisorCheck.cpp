@@ -10,7 +10,10 @@
 
 #include "PluginHostSupervisor.h"
 
+#include <cstdint>
 #include <cstdio>
+#include <string>
+#include <vector>
 #include <thread>
 
 namespace
@@ -83,6 +86,19 @@ int main(int argc, char** argv)
     sup.render(block(), out);
     CHECK(out.size() == 128 && allZero(out));
     CHECK(sup.state() == PluginHostSupervisor::State::Running);
+
+    // Plugin state is kept and sent again after a restart. With no plugin the host refuses,
+    // and the refusal text shows the state was sent: it comes back after the restart.
+    const std::vector<std::uint8_t> state { 1, 2, 3 };
+    CHECK(!sup.setState(state));
+    CHECK(sup.lastError().find("state refused") != std::string::npos);
+    sup.killHostForTesting();
+    sup.render(block(), out); // the crash is found here: Failed, silent
+    CHECK(sup.state() == PluginHostSupervisor::State::Failed);
+    std::this_thread::sleep_for(std::chrono::milliseconds(PluginHostSupervisor::kRestartCooldownMs + 100));
+    sup.render(block(), out); // restart: the state is sent again before the render
+    CHECK(sup.state() == PluginHostSupervisor::State::Running);
+    CHECK(sup.lastError().find("state refused") != std::string::npos);
 
     if (failures == 0)
         std::printf("supervisor kill test: ok\n");

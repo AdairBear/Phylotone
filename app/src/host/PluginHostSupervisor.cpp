@@ -107,6 +107,13 @@ bool PluginHostSupervisor::ensureRunning()
 
     state_ = State::Running;
     error_.clear();
+
+    if (!restoredState_.empty())
+    {
+        stateAccepted_ = sendState(restoredState_);
+        if (state_ != State::Running) // a broken host during the state: start again later
+            return false;
+    }
     return true;
 }
 
@@ -145,9 +152,20 @@ void PluginHostSupervisor::render(const phylo::host::ProcessRequest& in, std::ve
 
 bool PluginHostSupervisor::setState(const std::vector<std::uint8_t>& bytes)
 {
+    restoredState_ = bytes;
+    stateAccepted_ = true;
+
+    // A fresh start sends restoredState_ inside ensureRunning; a running host gets it here.
+    const bool wasRunning = pipe_.running() && state_ == State::Running;
     if (!ensureRunning())
         return false;
+    if (wasRunning)
+        stateAccepted_ = sendState(bytes);
+    return stateAccepted_;
+}
 
+bool PluginHostSupervisor::sendState(const std::vector<std::uint8_t>& bytes)
+{
     const auto request = phylo::host::encodeFrame(MsgType::SetState, bytes);
     if (!pipe_.writeAll(request.data(), request.size()))
     {
