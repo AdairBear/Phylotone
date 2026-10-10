@@ -26,7 +26,8 @@ std::string oneLine(std::string s)
 
 std::string serialisePlaybackSettings(const PlaybackSettings& s)
 {
-    return "plughost=" + oneLine(s.pluginHost) + "\nplugin=" + oneLine(s.plugin) + "\n";
+    return "plughost=" + oneLine(s.pluginHost) + "\nplugin=" + oneLine(s.plugin) + "\nstate=" +
+           oneLine(s.state) + "\n";
 }
 
 PlaybackSettings parsePlaybackSettings(const std::string& text)
@@ -48,6 +49,8 @@ PlaybackSettings parsePlaybackSettings(const std::string& text)
             out.pluginHost = value;
         else if (key == "plugin")
             out.plugin = value;
+        else if (key == "state")
+            out.state = value;
     }
     return out;
 }

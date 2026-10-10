@@ -11,6 +11,7 @@ struct PlaybackSettings
 {
     std::string pluginHost; // path to phylo-plughost
     std::string plugin;     // path to the plugin (a .vst3 bundle)
+    std::string state;      // optional: file of raw plugin state bytes, restored on start
 
     bool complete() const noexcept { return !pluginHost.empty() && !plugin.empty(); }
 };
@@ -18,7 +19,7 @@ struct PlaybackSettings
 // key=value lines, values single-line.
 std::string serialisePlaybackSettings(const PlaybackSettings& s);
 
-// Keys: plughost, plugin. Unknown keys, blank lines and lines starting with '#' are ignored.
+// Keys: plughost, plugin, state. Unknown keys, blank lines and lines starting with '#' are ignored.
 PlaybackSettings parsePlaybackSettings(const std::string& text);
 
 // Fills any empty value from the environment. Values from the file are kept.

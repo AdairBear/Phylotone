@@ -18,6 +18,23 @@ PipelinedRenderer::~PipelinedRenderer()
 {
     stop_.store(true, std::memory_order_release);
     worker_.join();
+    delete pendingState_.exchange(nullptr);
+}
+
+void PipelinedRenderer::restoreState(std::vector<std::uint8_t> bytes)
+{
+    {
+        std::lock_guard<std::mutex> lock(statusMutex_);
+        stateStatus_ = "plugin state queued";
+    }
+    auto* incoming = new std::vector<std::uint8_t>(std::move(bytes));
+    delete pendingState_.exchange(incoming, std::memory_order_acq_rel);
+}
+
+std::string PipelinedRenderer::stateStatus() const
+{
+    std::lock_guard<std::mutex> lock(statusMutex_);
+    return stateStatus_;
 }
 
 bool PipelinedRenderer::submit(phylo::host::ProcessRequest block)
@@ -73,6 +90,14 @@ void PipelinedRenderer::work()
     {
         if (killRequested_.exchange(false, std::memory_order_acq_rel))
             supervisor_->killHostForTesting();
+
+        if (std::vector<std::uint8_t>* bytes = pendingState_.exchange(nullptr, std::memory_order_acq_rel))
+        {
+            std::unique_ptr<std::vector<std::uint8_t>> owned(bytes);
+            const bool ok = supervisor_->setState(*owned);
+            std::lock_guard<std::mutex> lock(statusMutex_);
+            stateStatus_ = ok ? "plugin state restored" : "plugin state not accepted: " + supervisor_->lastError();
+        }
 
         const std::size_t head = requestHead_.load(std::memory_order_relaxed);
         const std::size_t tail = requestTail_.load(std::memory_order_acquire);

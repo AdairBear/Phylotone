@@ -8,8 +8,10 @@
 #include "phylo/Generator.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 #include <optional>
+#include <vector>
 
 namespace
 {
@@ -23,7 +25,8 @@ const char* kPlaybackTemplate =
     "# Plugin audio settings. Fill in both lines, then turn on Plugin audio in the app.\n"
     "# Any line left empty is read from PHYLO_PLUGHOST and PHYLO_PLUGIN instead.\n"
     "# plughost=/path/to/phylo-plughost\n"
-    "# plugin=/path/to/Akazi XL.vst3\n";
+    "# plugin=/path/to/Akazi XL.vst3\n"
+    "# state=/path/to/plugin-state.bin  (optional: raw plugin state, restored when Plugin audio starts)\n";
 
 const char* kDefaultScene =
     "// Phylotone scene. Save this file while the app runs and the change\n"
@@ -194,6 +197,18 @@ void MainComponent::setPluginAudio(bool on)
         feed = std::make_unique<AudioFeed>(*renderer, kFeedSampleRateHz, kFeedBlockFrames);
         audio = std::make_unique<AudioOutput>(*feed);
         pushToFeed();
+
+        // The plugin has no sample until its state is restored. Restore it before the first block.
+        if (!playbackSettings.state.empty())
+        {
+            juce::MemoryBlock bytes;
+            if (juce::File(juce::String(playbackSettings.state)).loadFileAsData(bytes))
+                renderer->restoreState(std::vector<std::uint8_t>(static_cast<const std::uint8_t*>(bytes.getData()),
+                                                                 static_cast<const std::uint8_t*>(bytes.getData()) +
+                                                                     bytes.getSize()));
+            else
+                pluginError = "State file not found: " + juce::String(playbackSettings.state);
+        }
     }
 
     const auto error = audio->open();
@@ -354,17 +369,18 @@ void MainComponent::updateStatus()
     statusLabel.setText(transport + "  |  " + (name.isEmpty() ? "no MIDI output" : "out: " + name),
                         juce::dontSendNotification);
 
-    juce::String pluginText;
-    if (pluginError.isNotEmpty())
-        pluginText = pluginError;
-    else if (audio && audio->isRunning())
+    juce::String pluginText = (audio && audio->isRunning()) ? "Plugin audio on: " + audio->deviceName()
+                                                            : juce::String("Plugin audio off");
+    if (audio && audio->isRunning() && feed && feed->droppedBlocks() > 0)
+        pluginText += "  |  dropped blocks: " + juce::String(static_cast<int>(feed->droppedBlocks()));
+    if (renderer)
     {
-        pluginText = "Plugin audio on: " + audio->deviceName();
-        if (feed && feed->droppedBlocks() > 0)
-            pluginText += "  |  dropped blocks: " + juce::String(static_cast<int>(feed->droppedBlocks()));
+        const auto state = renderer->stateStatus();
+        if (!state.empty())
+            pluginText += "  |  " + juce::String(state);
     }
-    else
-        pluginText = "Plugin audio off";
+    if (pluginError.isNotEmpty())
+        pluginText += "  |  " + pluginError;
     pluginLabel.setText(pluginText, juce::dontSendNotification);
 }
 

@@ -27,6 +27,12 @@ int main()
     CHECK(back.plugin == s.plugin);
     CHECK(back.complete());
 
+    // The state file path round-trips and is optional.
+    PlaybackSettings withState = s;
+    withState.state = "/Users/me/Documents/Phylotone/akazi.state";
+    CHECK(parsePlaybackSettings(serialisePlaybackSettings(withState)).state == withState.state);
+    CHECK(parsePlaybackSettings("plughost=/h\nplugin=/p\n").state.empty());
+
     // Comments, blank lines, unknown keys and spacing are tolerated.
     const auto messy = parsePlaybackSettings("# note\n\n  plughost =  /a/host  \nother=1\nplugin=/p.vst3\n");
     CHECK(messy.pluginHost == "/a/host");

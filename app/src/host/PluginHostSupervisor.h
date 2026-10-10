@@ -34,9 +34,11 @@ public:
     // receives planar output of the same size, silence if the host is unavailable.
     void render(const phylo::host::ProcessRequest& in, std::vector<float>& out);
 
-    // Restores the plugin's state from raw bytes (for example a sample path for Akazi XL).
-    // Returns false, with lastError() set, if the host is unavailable or refused the state.
-    // The host stays up when it refuses; only a broken or silent host is marked failed.
+    // Restores the plugin's state from raw bytes (for example a saved state for Akazi XL).
+    // The bytes are kept: every time the host starts, including after a crash and restart,
+    // they are sent again before the first render. Returns false, with lastError() set, if
+    // the host is unavailable or refused the state. The host stays up when it refuses; only
+    // a broken or silent host is marked failed.
     bool setState(const std::vector<std::uint8_t>& bytes);
 
     State state() const noexcept { return state_; }
@@ -50,6 +52,9 @@ private:
     bool ensureRunning();
     void fail(const std::string& why);
 
+    // Sends one state frame to a running host and waits for the answer.
+    bool sendState(const std::vector<std::uint8_t>& bytes);
+
     // Reads frames until one of `type` arrives, or the timeout passes.
     bool awaitFrame(phylo::host::MsgType type, int timeoutMs, phylo::host::Frame& out);
 
@@ -60,4 +65,6 @@ private:
     State state_ = State::Idle;
     std::string error_;
     std::chrono::steady_clock::time_point retryAt_{};
+    std::vector<std::uint8_t> restoredState_; // sent on every host start
+    bool stateAccepted_ = true;               // the last state the host answered
 };

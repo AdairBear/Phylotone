@@ -71,13 +71,15 @@
 - Open decisions are listed at the end of CONTRACT.md.
 
 ## Next
-1. Review and merge the audio-thread PR (`m4-audio-thread`), on Thomas's go-ahead.
-2. M4 sound check: set `Documents/Phylotone/playback.txt` (or `PHYLO_PLUGHOST` and `PHYLO_PLUGIN`),
-   turn on Plugin audio, press Play. Kill the host; the app keeps running. Needs a person.
-3. M4 audio-thread leftovers: `buildBlock` allocates a request each block; `AudioFeed::pull` grows its
+1. Review and merge `m4-audio-thread` (PR #23), then `m4-plugin-state` (stacked on #23), on Thomas's go-ahead.
+2. Plugin state for the app: `playback.txt` has `state=<file>`, restored when Plugin audio starts. A state
+   file must contain a sample for Akazi XL to sound. Making one still needs a step outside the app
+   (the scratch GetState and sourcePath patch). Next: a way to make the state file in the app or a tool,
+   or the sample-path option (patch the state from `sample=` in playback.txt).
+3. M4 sound check (needs a person): Plugin audio on, Play. Kill the host; the app keeps running.
+4. M4 audio-thread leftovers: `buildBlock` allocates a request each block; `AudioFeed::pull` grows its
    `ready_` deque; a replaced pattern's note storage is freed on the audio thread.
-4. M5 app side (levels, pan, master bus, record in the UI) on the same output.
-5. M2 is closed in code. Live checks need a person.
+5. M5 app side (levels, pan, master bus, record in the UI) on the same output.
 
 ## Working rules
 - New work goes on a branch with a pull request. Thomas reviews and merges.
@@ -180,3 +182,4 @@
   no reports. Not verified: sound through a device.
 - 2026-10-09: PR #22 (lock-free control) merged on Thomas's go-ahead.
 - 2026-10-09: M4 audio thread on `m4-audio-thread`: `PipelinedRenderer` has no mutex now. Each direction is an SPSC ring of 4 (caller submits and takes; the worker renders). The worker polls every 1 ms when idle. Results dropped when their ring is full are counted as dropped, so the taken + dropped invariant holds. `AudioFeed` tempo, meter and rate are read only when a serial changes (no double compares). `phylo_renderer_check` passes 20 of 20 runs; the renderer and feed checks pass under ThreadSanitizer with no reports. ctest 8/8. Not verified: sound through a device.
+- 2026-10-09: M4 plugin state on `m4-plugin-state` (stacked on `m4-audio-thread`). Plugin audio had no sample: nothing set the plugin state. `playback.txt` now takes `state=<file>` (raw state bytes). The renderer restores it on the worker thread before the first render (`PipelinedRenderer::restoreState`); the supervisor keeps the bytes and sends them again after every host start, so a crash and restart keeps the sound. Status line shows "plugin state restored" or the refusal. Checks: `phylo_playback_settings` (state key), `phylo_supervisor_kill` (state refused with no plugin, and re-sent after a restart); ctest 8/8; renderer check under ThreadSanitizer, no reports. Not verified: sound. The Akazi XL plugin is not on this machine, so no state was run through a real plugin here.
