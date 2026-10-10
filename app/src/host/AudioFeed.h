@@ -60,12 +60,11 @@ private:
     std::atomic<bool> wantPlaying_{false};
     std::atomic<phylo::Pattern*> pendingPattern_{nullptr}; // owned by whoever holds the pointer
     std::atomic<std::size_t> dropped_{0};
+    std::atomic<std::size_t> controlSerial_{0}; // bumped by each tempo, meter or sample-rate write
 
     // Audio thread only.
     phylo::Sequencer seq_;
-    double appliedSampleRate_ = -1.0;
-    double appliedTempo_ = -1.0;
-    int appliedMeter_ = -1;
+    std::size_t appliedSerial_ = static_cast<std::size_t>(-1);
     std::deque<float> ready_; // interleaved stereo, ready to play
     std::vector<phylo::MidiOut> midi_;
     std::vector<float> block_;

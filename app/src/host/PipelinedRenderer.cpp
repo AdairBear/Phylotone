@@ -1,5 +1,14 @@
 #include "PipelinedRenderer.h"
 
+#include <chrono>
+#include <memory>
+#include <utility>
+
+namespace
+{
+constexpr auto kIdlePollMs = std::chrono::milliseconds(1);
+}
+
 PipelinedRenderer::PipelinedRenderer(std::unique_ptr<PluginHostSupervisor> supervisor)
     : supervisor_(std::move(supervisor)), worker_([this] { work(); })
 {
@@ -7,86 +16,74 @@ PipelinedRenderer::PipelinedRenderer(std::unique_ptr<PluginHostSupervisor> super
 
 PipelinedRenderer::~PipelinedRenderer()
 {
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        stop_ = true;
-    }
-    wake_.notify_all();
+    stop_.store(true, std::memory_order_release);
     worker_.join();
 }
 
 bool PipelinedRenderer::submit(phylo::host::ProcessRequest block)
 {
+    const std::size_t tail = requestTail_.load(std::memory_order_relaxed);
+    const std::size_t head = requestHead_.load(std::memory_order_acquire);
+    if (tail - head >= kMaxQueued)
     {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (queued_.size() >= kMaxQueued)
-        {
-            ++dropped_;
-            return false;
-        }
-        queued_.push_back(std::move(block));
+        dropped_.fetch_add(1, std::memory_order_acq_rel);
+        return false;
     }
-    wake_.notify_one();
+    // The slot was moved out by the worker, so this move-assign frees nothing.
+    requests_[tail % kMaxQueued] = std::move(block);
+    requestTail_.store(tail + 1, std::memory_order_release);
     return true;
 }
 
 bool PipelinedRenderer::take(std::vector<float>& out, std::size_t samples)
 {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (done_.empty())
+    const std::size_t head = resultHead_.load(std::memory_order_relaxed);
+    const std::size_t tail = resultTail_.load(std::memory_order_acquire);
+    if (head == tail)
     {
         out.assign(samples, 0.0f);
         return false;
     }
-    out = std::move(done_.front());
-    done_.pop_front();
-    ++taken_;
+    // Swap, not move-assign: the caller's old buffer goes to the slot and is freed on the
+    // worker when the slot is next written, not here.
+    std::swap(out, results_[head % kMaxQueued]);
+    resultHead_.store(head + 1, std::memory_order_release);
+    taken_.fetch_add(1, std::memory_order_acq_rel);
     return true;
 }
 
 void PipelinedRenderer::requestKillForTesting()
 {
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        killRequested_ = true;
-    }
-    wake_.notify_one();
+    killRequested_.store(true, std::memory_order_release);
 }
 
 std::size_t PipelinedRenderer::droppedBlocks() const
 {
-    std::lock_guard<std::mutex> lock(mutex_);
-    return dropped_;
+    return dropped_.load(std::memory_order_acquire);
 }
 
 std::size_t PipelinedRenderer::takenBlocks() const
 {
-    std::lock_guard<std::mutex> lock(mutex_);
-    return taken_;
+    return taken_.load(std::memory_order_acquire);
 }
 
 void PipelinedRenderer::work()
 {
-    for (;;)
+    while (!stop_.load(std::memory_order_acquire))
     {
-        phylo::host::ProcessRequest request;
-        bool kill = false;
+        if (killRequested_.exchange(false, std::memory_order_acq_rel))
+            supervisor_->killHostForTesting();
+
+        const std::size_t head = requestHead_.load(std::memory_order_relaxed);
+        const std::size_t tail = requestTail_.load(std::memory_order_acquire);
+        if (head == tail)
         {
-            std::unique_lock<std::mutex> lock(mutex_);
-            wake_.wait(lock, [this] { return stop_ || killRequested_ || !queued_.empty(); });
-            if (stop_)
-                return;
-            kill = killRequested_;
-            killRequested_ = false;
-            if (!queued_.empty())
-            {
-                request = std::move(queued_.front());
-                queued_.pop_front();
-            }
+            std::this_thread::sleep_for(kIdlePollMs);
+            continue;
         }
 
-        if (kill)
-            supervisor_->killHostForTesting();
+        phylo::host::ProcessRequest request = std::move(requests_[head % kMaxQueued]);
+        requestHead_.store(head + 1, std::memory_order_release);
 
         if (request.frames == 0)
             continue;
@@ -94,13 +91,15 @@ void PipelinedRenderer::work()
         std::vector<float> result;
         supervisor_->render(request, result);
 
-        std::lock_guard<std::mutex> lock(mutex_);
-        done_.push_back(std::move(result));
-        if (done_.size() > kMaxQueued)
+        const std::size_t rHead = resultHead_.load(std::memory_order_acquire);
+        const std::size_t rTail = resultTail_.load(std::memory_order_relaxed);
+        if (rTail - rHead >= kMaxQueued)
         {
-            // Nobody is taking. Keep the newest so the output stays current.
-            done_.pop_front();
-            ++dropped_;
+            // Nobody is taking. The block is dropped, so it is counted as dropped.
+            dropped_.fetch_add(1, std::memory_order_acq_rel);
+            continue;
         }
+        results_[rTail % kMaxQueued] = std::move(result);
+        resultTail_.store(rTail + 1, std::memory_order_release);
     }
 }

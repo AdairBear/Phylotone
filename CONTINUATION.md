@@ -71,11 +71,11 @@
 - Open decisions are listed at the end of CONTRACT.md.
 
 ## Next
-1. Review and merge the lock-free control PR (`m4-lockfree-feed`), on Thomas's go-ahead.
+1. Review and merge the audio-thread PR (`m4-audio-thread`), on Thomas's go-ahead.
 2. M4 sound check: set `Documents/Phylotone/playback.txt` (or `PHYLO_PLUGHOST` and `PHYLO_PLUGIN`),
    turn on Plugin audio, press Play. Kill the host; the app keeps running. Needs a person.
-3. M4 audio-thread leftovers: `PipelinedRenderer::submit/take` take a mutex shared with the worker;
-   the feed's buffers and the pattern free in `applyControls` still allocate or free on the audio thread.
+3. M4 audio-thread leftovers: `buildBlock` allocates a request each block; `AudioFeed::pull` grows its
+   `ready_` deque; a replaced pattern's note storage is freed on the audio thread.
 4. M5 app side (levels, pan, master bus, record in the UI) on the same output.
 5. M2 is closed in code. Live checks need a person.
 
@@ -178,3 +178,5 @@
   buffer growth/pattern free (listed in Next). Checks: `phylo_audio_feed_check` adds last-write-wins
   and a control-thread churn test; ctest 8/8; the feed check also passes under ThreadSanitizer with
   no reports. Not verified: sound through a device.
+- 2026-10-09: PR #22 (lock-free control) merged on Thomas's go-ahead.
+- 2026-10-09: M4 audio thread on `m4-audio-thread`: `PipelinedRenderer` has no mutex now. Each direction is an SPSC ring of 4 (caller submits and takes; the worker renders). The worker polls every 1 ms when idle. Results dropped when their ring is full are counted as dropped, so the taken + dropped invariant holds. `AudioFeed` tempo, meter and rate are read only when a serial changes (no double compares). `phylo_renderer_check` passes 20 of 20 runs; the renderer and feed checks pass under ThreadSanitizer with no reports. ctest 8/8. Not verified: sound through a device.
