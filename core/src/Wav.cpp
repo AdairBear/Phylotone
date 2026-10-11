@@ -77,6 +77,7 @@ bool writeWavFloat(const std::string& path, const std::vector<float>& interleave
     if (!out)
         return false;
     out.write(reinterpret_cast<const char*>(b.data()), static_cast<std::streamsize>(b.size()));
+    out.close(); // flushes, so a disk-full error at the end is reported
     return static_cast<bool>(out);
 }
 
@@ -96,7 +97,7 @@ bool readWavFloat(const std::string& path, std::vector<float>& interleaved, int&
         const std::uint8_t* chunk = b.data() + pos;
         const std::size_t size = get32(chunk + 4);
         const std::size_t body = pos + 8;
-        if (body + size > b.size())
+        if (size > b.size() - body) // body <= b.size() here, so this cannot wrap
             return false;
 
         if (std::memcmp(chunk, "fmt ", 4) == 0)

@@ -525,6 +525,95 @@ TEST(name_must_be_valid_utf8)
     }
 }
 
+TEST(name_utf8_overlongs_surrogates_and_strays_are_refused)
+{
+    const char* bad[] = {"\xF0\x80\x80\x80",         // 4-byte overlong NUL
+                         "\xF0\x8F\xBF\xBF",         // 4-byte overlong, the largest one
+                         "\xED\xA0\x80",             // UTF-16 surrogate U+D800
+                         "\xED\xBF\xBF",             // U+DFFF
+                         "\xF4\x90\x80\x80",         // above U+10FFFF
+                         "\x80",                     // lone continuation byte
+                         "a\xBF",                    // continuation after ASCII
+                         "\xC3\xA9\x80"};            // continuation after a full character
+    for (const char* n : bad)
+    {
+        const std::string name(n);
+        Forge f;
+        f.preamble(48000, 1).slotHead(7, 60, 1, static_cast<int>(name.size()), 1).name(name).floats(1);
+        const BlobResult r = check(f.b);
+        CHECK(r.code == BlobError::BadName);
+        SampleSlotSet out;
+        CHECK(decodeSampleBlob(f.b.data(), f.b.size(), out).code == BlobError::BadName);
+        CHECK(out.empty());
+
+        SampleSlotSet in{makeSlot(7, 1, 2, name)};
+        Bytes enc;
+        CHECK(encodeSampleBlob(in, enc).code == BlobError::BadName);
+    }
+}
+
+TEST(name_with_a_four_byte_character_round_trips)
+{
+    const std::string name = "grin \xF0\x9F\x98\x80"; // U+1F600
+    SampleSlotSet in{makeSlot(7, 1, 2, name)};
+    const Bytes blob = encodeOk(in);
+    SampleSlotSet out;
+    CHECK(decodeSampleBlob(blob.data(), blob.size(), out).ok());
+    CHECK_EQ(out.size(), 1u);
+    if (out.size() == 1)
+        CHECK(out[0].name == name);
+    // The same name as the whole 4-byte character alone.
+    SampleSlotSet lone{makeSlot(8, 1, 2, "\xF0\x9F\x98\x80")};
+    const Bytes blob2 = encodeOk(lone);
+    SampleSlotSet out2;
+    CHECK(decodeSampleBlob(blob2.data(), blob2.size(), out2).ok());
+    CHECK_EQ(out2.size(), 1u);
+    if (out2.size() == 1)
+        CHECK_EQ(out2[0].name.size(), 4u);
+}
+
+TEST(total_size_over_the_budget_is_refused_before_anything_else_after_the_header)
+{
+    // One ~64 MiB zero-filled buffer, reused: header and preamble written at the front.
+    Bytes big(kMaxBlobBytes + 1, 0);
+    auto setPreamble = [&](std::uint32_t rate, std::uint32_t count)
+    {
+        std::memcpy(big.data(), kBlobHeader, kBlobHeaderBytes);
+        for (int i = 0; i < 4; ++i)
+        {
+            big[16 + static_cast<std::size_t>(i)] = static_cast<std::uint8_t>(rate >> (8 * i));
+            big[20 + static_cast<std::size_t>(i)] = static_cast<std::uint8_t>(count >> (8 * i));
+        }
+    };
+
+    // One byte over, valid header and preamble.
+    setPreamble(48000, 0);
+    BlobResult r = checkSampleBlob(big.data(), big.size());
+    CHECK(r.code == BlobError::SetTooLarge);
+    SampleSlotSet out;
+    out.push_back(makeSlot(0, 1, 1));
+    CHECK(decodeSampleBlob(big.data(), big.size(), out).code == BlobError::SetTooLarge);
+    CHECK(out.empty());
+
+    // One byte over and a wrong sample rate: the size is reported first.
+    setPreamble(44100, 0);
+    CHECK(checkSampleBlob(big.data(), big.size()).code == BlobError::SetTooLarge);
+
+    // A wrong header still comes before the size.
+    setPreamble(48000, 0);
+    big[15] = '9';
+    CHECK(checkSampleBlob(big.data(), big.size()).code == BlobError::UnknownHeader);
+    big[15] = '1';
+
+    // Exactly the limit is not too large; it fails on what follows the preamble instead.
+    r = checkSampleBlob(big.data(), kMaxBlobBytes);
+    CHECK(r.code != BlobError::SetTooLarge);
+    CHECK(r.code == BlobError::TrailingBytes);
+    setPreamble(44100, 0);
+    r = checkSampleBlob(big.data(), kMaxBlobBytes);
+    CHECK(r.code == BlobError::WrongSampleRate);
+}
+
 TEST(samples_must_be_finite)
 {
     const float values[] = {std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity(),

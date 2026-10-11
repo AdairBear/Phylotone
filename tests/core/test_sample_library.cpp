@@ -280,7 +280,8 @@ TEST(assign_rules)
     CHECK(lib.assign(b, 5).ok);
     CHECK(lib.inSlot(5) == lib.find(b));
     CHECK(lib.find(a) != nullptr);
-    CHECK_EQ(lib.find(a)->slot, kNoSlot);
+    if (lib.find(a))
+        CHECK_EQ(lib.find(a)->slot, kNoSlot);
     CHECK_EQ(lib.entries().size(), 2u);
 
     // Moving frees the old slot.
@@ -291,7 +292,9 @@ TEST(assign_rules)
     // clearSlot keeps the sample.
     CHECK(lib.clearSlot(9).ok);
     CHECK(lib.inSlot(9) == nullptr);
-    CHECK_EQ(lib.find(b)->slot, kNoSlot);
+    CHECK(lib.find(b) != nullptr);
+    if (lib.find(b))
+        CHECK_EQ(lib.find(b)->slot, kNoSlot);
     CHECK_EQ(lib.entries().size(), 2u);
     CHECK(lib.clearSlot(9).ok); // empty slot
     CHECK(!lib.clearSlot(128).ok);
@@ -305,7 +308,9 @@ TEST(assign_rules)
     CHECK(!lib.setRootNote("nope.wav", 60).ok);
     CHECK(lib.setRootNote(a, 0).ok);
     CHECK(lib.setRootNote(a, 127).ok);
-    CHECK_EQ(lib.find(a)->rootNote, 127);
+    CHECK(lib.find(a) != nullptr);
+    if (lib.find(a))
+        CHECK_EQ(lib.find(a)->rootNote, 127);
     CHECK(!lib.rename("nope.wav", "x").ok);
 }
 
@@ -468,7 +473,9 @@ TEST(max_length_accepted)
     const std::vector<float> s(static_cast<std::size_t>(kMaxSampleFrames), 0.5f);
     std::string f;
     CHECK(lib.add("long", 1, s, f).ok);
-    CHECK_EQ(lib.find(f)->frames, kMaxSampleFrames);
+    CHECK(lib.find(f) != nullptr);
+    if (lib.find(f))
+        CHECK_EQ(lib.find(f)->frames, kMaxSampleFrames);
 
     SampleLibrary again(t.lib);
     CHECK(again.open().ok);
@@ -516,9 +523,12 @@ TEST(missing_file_keeps_slot)
     SampleLibrary back(t.lib);
     CHECK(back.open().ok);
     CHECK(back.find(f) != nullptr && !back.find(f)->missing);
-    CHECK_EQ(back.find(f)->frames, 64u);
-    CHECK_EQ(back.find(f)->rootNote, 40);
-    CHECK_EQ(back.find(f)->slot, kNoSlot); // we cleared it above
+    if (back.find(f))
+    {
+        CHECK_EQ(back.find(f)->frames, 64u);
+        CHECK_EQ(back.find(f)->rootNote, 40);
+        CHECK_EQ(back.find(f)->slot, kNoSlot); // we cleared it above
+    }
 }
 
 TEST(missing_file_slot_survives_until_back)
@@ -537,14 +547,16 @@ TEST(missing_file_slot_survives_until_back)
     {
         SampleLibrary lib(t.lib);
         CHECK(lib.open().ok);
-        CHECK(lib.find(f)->missing);
-        CHECK_EQ(lib.find(f)->slot, 12);
+        CHECK(lib.find(f) != nullptr && lib.find(f)->missing);
+        if (lib.find(f))
+            CHECK_EQ(lib.find(f)->slot, 12);
     }
     writeBytes(t.file(f), bytes);
     SampleLibrary back(t.lib);
     CHECK(back.open().ok);
-    CHECK(!back.find(f)->missing);
-    CHECK_EQ(back.find(f)->slot, 12);
+    CHECK(back.find(f) != nullptr && !back.find(f)->missing);
+    if (back.find(f))
+        CHECK_EQ(back.find(f)->slot, 12);
     SampleSlotSet set;
     CHECK(back.buildSlotSet(set).ok);
     CHECK_EQ(set.size(), 1u);
@@ -700,10 +712,16 @@ TEST(damaged_index_duplicates)
     SampleLibrary lib(t.lib);
     CHECK(lib.open().ok);
     CHECK_EQ(lib.entries().size(), 3u);
-    CHECK_EQ(lib.find("a.wav")->slot, 5);
-    CHECK_EQ(lib.find("a.wav")->name == "A", 1);
-    CHECK_EQ(lib.find("b.wav")->slot, kNoSlot);
-    CHECK_EQ(lib.find("c.wav")->slot, 6); // the dropped duplicate line did not take slot 6
+    CHECK(lib.find("a.wav") != nullptr && lib.find("b.wav") != nullptr && lib.find("c.wav") != nullptr);
+    if (lib.find("a.wav"))
+    {
+        CHECK_EQ(lib.find("a.wav")->slot, 5);
+        CHECK(lib.find("a.wav")->name == "A");
+    }
+    if (lib.find("b.wav"))
+        CHECK_EQ(lib.find("b.wav")->slot, kNoSlot);
+    if (lib.find("c.wav"))
+        CHECK_EQ(lib.find("c.wav")->slot, 6); // the dropped duplicate line did not take slot 6
     CHECK(hasWarningWith(lib, "line 3"));
     CHECK(hasWarningWith(lib, "line 4"));
     CHECK(readBytes(t.file("index.txt.bad")) == text);
@@ -725,10 +743,15 @@ TEST(crlf_index_accepted)
     CHECK(lib.open().ok);
     CHECK(lib.warnings().empty());
     CHECK_EQ(lib.entries().size(), 2u);
-    CHECK_EQ(lib.find("a.wav")->slot, 4);
-    CHECK_EQ(lib.find("a.wav")->rootNote, 48);
-    CHECK(lib.find("a.wav")->name == "Alpha");
-    CHECK(lib.find("b.wav")->name == "Beta");
+    CHECK(lib.find("a.wav") != nullptr && lib.find("b.wav") != nullptr);
+    if (lib.find("a.wav"))
+    {
+        CHECK_EQ(lib.find("a.wav")->slot, 4);
+        CHECK_EQ(lib.find("a.wav")->rootNote, 48);
+        CHECK(lib.find("a.wav")->name == "Alpha");
+    }
+    if (lib.find("b.wav"))
+        CHECK(lib.find("b.wav")->name == "Beta");
     CHECK(!fs::exists(t.file("index.txt.bad")));
     CHECK(readBytes(t.file("index.txt")) == text); // untouched
 }
@@ -753,7 +776,9 @@ TEST(crash_safety_stale_tmp_and_unchanged_open)
     CHECK(lib.open().ok);
     CHECK(lib.warnings().empty());
     CHECK_EQ(lib.entries().size(), 1u);
-    CHECK_EQ(lib.find(f)->slot, 2);
+    CHECK(lib.find(f) != nullptr);
+    if (lib.find(f))
+        CHECK_EQ(lib.find(f)->slot, 2);
     CHECK(readBytes(t.file("index.txt")) == before);
     CHECK(fs::last_write_time(t.file("index.txt"), ec) == timeBefore);
     CHECK(!fs::exists(t.file("index.txt.bad")));
@@ -769,7 +794,9 @@ TEST(crash_safety_stale_tmp_and_unchanged_open)
     CHECK(readBytes(t.file("index.txt")).find("\t70\t") != std::string::npos);
     SampleLibrary last(t.lib);
     CHECK(last.open().ok);
-    CHECK_EQ(last.find(f)->rootNote, 70);
+    CHECK(last.find(f) != nullptr);
+    if (last.find(f))
+        CHECK_EQ(last.find(f)->rootNote, 70);
 }
 
 TEST(build_slot_set)
@@ -881,5 +908,596 @@ TEST(reopen_picks_up_changes)
     CHECK_EQ(lib.entries().size(), 2u);
     CHECK(lib.find("late.wav") != nullptr);
 }
+
+// ---------------------------------------------------------------------------------------
+// Review fixes.
+
+namespace
+{
+
+std::string indexOf(const std::string& tail)
+{
+    return kHeaderLine + tail;
+}
+
+// A file outside the library folder, with known contents, that nothing may write to.
+struct Victim
+{
+    fs::path path;
+    std::string bytes = "do not touch this file\n";
+
+    explicit Victim(const TempDir& t) : path(t.root / "victim.txt")
+    {
+        std::error_code ec;
+        fs::create_directories(t.root, ec);
+        writeBytes(path, bytes);
+    }
+    bool untouched() const { return fs::exists(path) && readBytes(path) == bytes; }
+};
+
+} // namespace
+
+#if !defined(_WIN32)
+
+TEST(symlinked_tmp_is_never_written_through)
+{
+    TempDir t;
+    const Victim v(t);
+    SampleLibrary lib(t.lib);
+    CHECK(lib.open().ok);
+    std::string f;
+    CHECK(lib.add("kick", 1, ramp(20), f).ok);
+    const std::string before = readBytes(t.file("index.txt"));
+
+    std::error_code ec;
+    fs::create_symlink(v.path, t.file("index.txt.tmp"), ec);
+    CHECK(!ec);
+
+    const LibraryResult r = lib.setRootNote(f, 70);
+    CHECK(!r.ok);
+    CHECK(r.message.find("index.txt.tmp") != std::string::npos);
+    CHECK(v.untouched());
+    CHECK(fs::is_symlink(t.file("index.txt.tmp"))); // the user's symlink is still there
+    CHECK(lib.find(f) != nullptr);
+    if (lib.find(f))
+        CHECK_EQ(lib.find(f)->rootNote, kDefaultRootNote);
+    CHECK(readBytes(t.file("index.txt")) == before);
+
+    // The same through every other way of saving.
+    std::string g;
+    CHECK(!lib.add("snare", 1, ramp(20), g).ok);
+    CHECK(!lib.assign(f, 3).ok);
+    CHECK(!lib.rename(f, "other").ok);
+    CHECK(v.untouched());
+    CHECK(fs::is_symlink(t.file("index.txt.tmp")));
+}
+
+TEST(symlinked_tmp_dangling_is_left_alone_too)
+{
+    TempDir t;
+    const fs::path nowhere = t.root / "not_there.txt";
+    SampleLibrary lib(t.lib);
+    CHECK(lib.open().ok);
+    std::string f;
+    CHECK(lib.add("kick", 1, ramp(20), f).ok);
+    std::error_code ec;
+    fs::create_symlink(nowhere, t.file("index.txt.tmp"), ec);
+    CHECK(!lib.setRootNote(f, 70).ok);
+    CHECK(!fs::exists(nowhere)); // nothing was created through the link
+    CHECK(fs::is_symlink(t.file("index.txt.tmp")));
+}
+
+TEST(symlinked_bad_is_never_written_through)
+{
+    TempDir t;
+    const Victim v(t);
+    std::error_code ec;
+    fs::create_directories(t.dir(), ec);
+    CHECK(writeWav(t.file("one.wav"), ramp(10), 1));
+    const std::string garbage = "not an index\n";
+    writeBytes(t.file("index.txt"), garbage);
+    fs::create_symlink(v.path, t.file("index.txt.bad"), ec);
+    CHECK(!ec);
+
+    SampleLibrary lib(t.lib);
+    CHECK(lib.open().ok);
+    CHECK(v.untouched());
+    CHECK(fs::is_symlink(t.file("index.txt.bad")));
+    // The damaged index was still kept, under the next free name.
+    CHECK(readBytes(t.file("index.txt.bad-2")) == garbage);
+    CHECK(lib.find("one.wav") != nullptr);
+    CHECK(readBytes(t.file("index.txt")).compare(0, kHeaderLine.size(), kHeaderLine) == 0);
+}
+
+TEST(symlinked_index_is_not_replaced)
+{
+    TempDir t;
+    Victim v(t);
+    v.bytes = indexOf("a.wav\t4\t48\tAlpha\n");
+    writeBytes(v.path, v.bytes);
+    std::error_code ec;
+    fs::create_directories(t.dir(), ec);
+    CHECK(writeWav(t.file("a.wav"), ramp(10), 1));
+    fs::create_symlink(v.path, t.file("index.txt"), ec);
+    CHECK(!ec);
+
+    SampleLibrary lib(t.lib);
+    CHECK(lib.open().ok);
+    CHECK(hasWarningWith(lib, "index.txt"));
+    CHECK(hasWarningWith(lib, "symlink"));
+    CHECK(v.untouched());
+    CHECK(fs::is_symlink(t.file("index.txt")));
+    CHECK(!fs::exists(t.file("index.txt.tmp")));
+
+    CHECK(!lib.setRootNote("a.wav", 10).ok);
+    CHECK(!lib.assign("a.wav", 9).ok);
+    std::string f;
+    const LibraryResult r = lib.add("new", 1, ramp(10), f);
+    CHECK(!r.ok);
+    CHECK(r.message.find("index.txt") != std::string::npos);
+    CHECK(!fs::exists(t.file("new.wav"))); // refused before a file was written
+    CHECK(v.untouched());
+    CHECK(fs::is_symlink(t.file("index.txt")));
+    CHECK(!fs::exists(t.file("index.txt.tmp")));
+}
+
+TEST(hand_placed_names_the_index_cannot_hold_are_not_adopted)
+{
+    TempDir t;
+    std::error_code ec;
+    fs::create_directories(t.dir(), ec);
+    const std::string names[] = {"my\tkick.wav", "line\nbreak.wav", "back\\slash.wav", "del\x7f.wav", "ctl\x01.wav",
+                                 "col:on.wav"};
+    std::vector<std::string> bytes;
+    for (const std::string& n : names)
+    {
+        CHECK(writeWav(t.file(n), ramp(12), 1));
+        bytes.push_back(readBytes(t.file(n)));
+    }
+    CHECK(writeWav(t.file("good.wav"), ramp(12), 1));
+    writeBytes(t.file("index.txt"), indexOf("good.wav\t7\t60\tgood\n"));
+    const std::string idx = readBytes(t.file("index.txt"));
+
+    SampleLibrary lib(t.lib);
+    CHECK(lib.open().ok);
+    CHECK_EQ(lib.entries().size(), 1u);
+    CHECK(lib.find("good.wav") != nullptr);
+    CHECK_EQ(lib.warnings().size(), 6u);
+    CHECK(hasWarningWith(lib, "rename the file to import it"));
+    CHECK(hasWarningWith(lib, "the index cannot hold"));
+    for (std::size_t i = 0; i < 6; ++i)
+    {
+        CHECK(fs::exists(t.file(names[i])));
+        CHECK(readBytes(t.file(names[i])) == bytes[i]);
+    }
+    // Nothing was adopted, so nothing was saved: no new index, no .bad, no injected line.
+    CHECK(readBytes(t.file("index.txt")) == idx);
+    CHECK(!fs::exists(t.file("index.txt.bad")));
+
+    std::error_code te;
+    const auto stamp = fs::last_write_time(t.file("index.txt"), te);
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+    SampleLibrary again(t.lib);
+    CHECK(again.open().ok);
+    CHECK_EQ(again.entries().size(), 1u);
+    CHECK(readBytes(t.file("index.txt")) == idx);
+    CHECK(fs::last_write_time(t.file("index.txt"), te) == stamp);
+    CHECK(!fs::exists(t.file("index.txt.bad")));
+    CHECK_EQ(again.warnings().size(), 6u);
+}
+
+TEST(newline_name_cannot_inject_an_index_line)
+{
+    TempDir t;
+    std::error_code ec;
+    fs::create_directories(t.dir(), ec);
+    CHECK(writeWav(t.file("x.wav\nevil.wav\t5\t60\thacked\n.wav"), ramp(12), 1));
+    SampleLibrary lib(t.lib);
+    CHECK(lib.open().ok);
+    CHECK(lib.entries().empty());
+    CHECK(!fs::exists(t.file("index.txt")));
+}
+
+#endif // !_WIN32
+
+TEST(index_names_with_backslash_control_or_colon_are_skipped)
+{
+    TempDir t;
+    std::error_code ec;
+    fs::create_directories(t.dir(), ec);
+    CHECK(writeWav(t.file("ok.wav"), ramp(10), 1));
+    const std::string text = indexOf(std::string("ok.wav\t1\t60\tOk\n") +        // line 2 good
+                                     "back\\slash.wav\t-\t60\tB\n" +             // line 3
+                                     "ctl\x01x.wav\t-\t60\tC\n" +                // line 4
+                                     "del\x7f.wav\t-\t60\tD\n" +                 // line 5
+                                     "C:foo.wav\t-\t60\tE\n" +                   // line 6
+                                     "foo.wav:stream\t-\t60\tF\n");              // line 7
+    writeBytes(t.file("index.txt"), text);
+    SampleLibrary lib(t.lib);
+    CHECK(lib.open().ok);
+    CHECK_EQ(lib.entries().size(), 1u);
+    CHECK(lib.find("ok.wav") != nullptr);
+    for (const char* n : {"line 3", "line 4", "line 5", "line 6", "line 7"})
+        CHECK(hasWarningWith(lib, n));
+    CHECK(lib.find("C:foo.wav") == nullptr);
+    CHECK(readBytes(t.file("index.txt.bad")) == text);
+}
+
+TEST(second_damaged_index_does_not_overwrite_the_first_backup)
+{
+    TempDir t;
+    std::error_code ec;
+    fs::create_directories(t.dir(), ec);
+    CHECK(writeWav(t.file("one.wav"), ramp(10), 1));
+    const std::string g1 = indexOf("one.wav\t4\t60\tOne\nthis line is damaged\n");
+    writeBytes(t.file("index.txt"), g1);
+    {
+        SampleLibrary lib(t.lib);
+        CHECK(lib.open().ok);
+        CHECK(lib.find("one.wav") != nullptr);
+        if (lib.find("one.wav"))
+            CHECK_EQ(lib.find("one.wav")->slot, 4);
+    }
+    CHECK(readBytes(t.file("index.txt.bad")) == g1);
+
+    const std::string g2 = "garbage number two\n";
+    writeBytes(t.file("index.txt"), g2);
+    {
+        SampleLibrary lib(t.lib);
+        CHECK(lib.open().ok);
+    }
+    CHECK(readBytes(t.file("index.txt.bad")) == g1); // the first backup is as it was
+    CHECK(readBytes(t.file("index.txt.bad-2")) == g2);
+
+    const std::string g3 = "garbage number three\n";
+    writeBytes(t.file("index.txt"), g3);
+    SampleLibrary lib(t.lib);
+    CHECK(lib.open().ok);
+    CHECK(readBytes(t.file("index.txt.bad")) == g1);
+    CHECK(readBytes(t.file("index.txt.bad-2")) == g2);
+    CHECK(readBytes(t.file("index.txt.bad-3")) == g3);
+
+    // The backups are not samples and not index entries, and never take a sample's name.
+    SampleLibrary again(t.lib);
+    CHECK(again.open().ok);
+    CHECK(again.warnings().empty());
+    CHECK_EQ(again.entries().size(), 1u);
+    writeBytes(t.file("index.txt"), indexOf("index.txt.bad-2\t-\t60\tx\none.wav\t-\t60\tOne\n"));
+    SampleLibrary reserved(t.lib);
+    CHECK(reserved.open().ok);
+    CHECK(reserved.find("index.txt.bad-2") == nullptr);
+    CHECK(hasWarningWith(reserved, "line 2"));
+    std::string f;
+    CHECK(reserved.add("index.txt.bad", 1, ramp(4), f).ok);
+    CHECK(f != "index.txt.bad" && f != "index.txt.bad-2" && f != "index.txt.bad-3");
+    CHECK(readBytes(t.file("index.txt.bad-2")) == g2);
+}
+
+TEST(index_with_a_utf8_bom_is_read)
+{
+    TempDir t;
+    std::error_code ec;
+    fs::create_directories(t.dir(), ec);
+    CHECK(writeWav(t.file("a.wav"), ramp(10), 1));
+    const std::string text = "\xEF\xBB\xBF" + indexOf("a.wav\t4\t48\tAlpha\n");
+    writeBytes(t.file("index.txt"), text);
+    SampleLibrary lib(t.lib);
+    CHECK(lib.open().ok);
+    CHECK(lib.warnings().empty());
+    CHECK_EQ(lib.entries().size(), 1u);
+    if (lib.find("a.wav"))
+    {
+        CHECK_EQ(lib.find("a.wav")->slot, 4);
+        CHECK(lib.find("a.wav")->name == "Alpha");
+    }
+    CHECK(!fs::exists(t.file("index.txt.bad")));
+    CHECK(readBytes(t.file("index.txt")) == text); // not rewritten
+}
+
+TEST(index_from_a_newer_version_is_left_alone)
+{
+    for (const char* header : {"phylotone.samples.index.v2", "phylotone.samples.index.v10", "phylotone.samples.index.v0",
+                               "phylotone.samples.index."})
+    {
+        TempDir t;
+        std::error_code ec;
+        fs::create_directories(t.dir(), ec);
+        CHECK(writeWav(t.file("a.wav"), ramp(10), 1));
+        const std::string wavBytes = readBytes(t.file("a.wav"));
+        const std::string text = std::string(header) + "\na.wav\t4\t48\tAlpha\tnew field\n";
+        writeBytes(t.file("index.txt"), text);
+
+        SampleLibrary lib(t.lib);
+        const LibraryResult r = lib.open();
+        CHECK(!r.ok);
+        CHECK(r.message.find("newer version of Phylotone") != std::string::npos);
+        CHECK(r.message.find("left as it is") != std::string::npos);
+        CHECK(lib.entries().empty());
+        CHECK(readBytes(t.file("index.txt")) == text);
+        CHECK(!fs::exists(t.file("index.txt.bad")));
+        CHECK(!fs::exists(t.file("index.txt.tmp")));
+
+        // The library cannot be used to replace it either.
+        std::string f;
+        CHECK(!lib.add("new", 1, ramp(10), f).ok);
+        CHECK(!fs::exists(t.file("new.wav")));
+        CHECK(!lib.assign("a.wav", 1).ok);
+        CHECK(readBytes(t.file("index.txt")) == text);
+        CHECK(readBytes(t.file("a.wav")) == wavBytes);
+
+        // Once the index is v1 again, open() works.
+        writeBytes(t.file("index.txt"), indexOf("a.wav\t4\t48\tAlpha\n"));
+        CHECK(lib.open().ok);
+        CHECK(lib.find("a.wav") != nullptr);
+        if (lib.find("a.wav"))
+            CHECK_EQ(lib.find("a.wav")->slot, 4);
+    }
+}
+
+TEST(index_over_one_mebibyte_is_not_parsed)
+{
+    TempDir t;
+    std::error_code ec;
+    fs::create_directories(t.dir(), ec);
+    CHECK(writeWav(t.file("a.wav"), ramp(10), 1));
+    const std::size_t mib = 1u << 20;
+    const std::string base = indexOf("a.wav\t3\t50\tAlpha\n");
+
+    // Exactly 1 MiB (padded with blank lines) is still an index.
+    const std::string exact = base + std::string(mib - base.size(), '\n');
+    CHECK_EQ(exact.size(), mib);
+    writeBytes(t.file("index.txt"), exact);
+    {
+        SampleLibrary lib(t.lib);
+        CHECK(lib.open().ok);
+        CHECK(lib.warnings().empty());
+        CHECK(lib.find("a.wav") != nullptr);
+        if (lib.find("a.wav"))
+            CHECK_EQ(lib.find("a.wav")->slot, 3);
+        CHECK(!fs::exists(t.file("index.txt.bad")));
+    }
+
+    // One byte more is treated as damaged: warning, backup, adoption from the folder.
+    const std::string over = base + std::string(mib - base.size() + 1, '\n');
+    writeBytes(t.file("index.txt"), over);
+    SampleLibrary lib(t.lib);
+    CHECK(lib.open().ok);
+    CHECK(!lib.warnings().empty());
+    CHECK(hasWarningWith(lib, "1 MiB"));
+    CHECK_EQ(lib.entries().size(), 1u);
+    CHECK(lib.find("a.wav") != nullptr);
+    if (lib.find("a.wav"))
+        CHECK_EQ(lib.find("a.wav")->slot, kNoSlot); // the huge file was not read
+    CHECK(readBytes(t.file("index.txt.bad")) == over);
+    CHECK(readBytes(t.file("index.txt")).size() < 200u);
+}
+
+TEST(windows_device_and_colon_names)
+{
+    TempDir t;
+    SampleLibrary lib(t.lib);
+    CHECK(lib.open().ok);
+    for (const char* name : {"con.kit", "CON.kit", "aux.x.y", "Nul.", "com1.foo", "lpt9.a", "prn", "con", "com5"})
+    {
+        std::string f;
+        CHECK(lib.add(name, 1, ramp(4), f).ok);
+        std::string head = f.substr(0, f.find('.'));
+        for (char& c : head)
+            c = static_cast<char>(c >= 'A' && c <= 'Z' ? c - 'A' + 'a' : c);
+        CHECK(head != "con" && head != "prn" && head != "aux" && head != "nul");
+        CHECK(!(head.size() == 4 && (head.compare(0, 3, "com") == 0 || head.compare(0, 3, "lpt") == 0)));
+        CHECK(fs::exists(t.file(f)));
+        CHECK(f.size() > 4 && f.compare(f.size() - 4, 4, ".wav") == 0);
+    }
+    std::string f;
+    CHECK(lib.add("con.kit", 1, ramp(4), f).ok);
+    CHECK(f.compare(0, 4, "con_") == 0);
+
+    // A name with a colon in the index line is skipped on every platform.
+    const std::string text = indexOf("C:foo.wav\t-\t60\tx\n");
+    writeBytes(t.file("index.txt"), text);
+    SampleLibrary other(t.lib);
+    CHECK(other.open().ok);
+    CHECK(other.find("C:foo.wav") == nullptr);
+    CHECK(hasWarningWith(other, "line 2"));
+
+    // And a sample whose name has a colon makes a file without one.
+    std::string g;
+    CHECK(other.add("a:b", 1, ramp(4), g).ok);
+    CHECK(g.find(':') == std::string::npos);
+}
+
+TEST(same_file_under_another_spelling_is_not_adopted_twice)
+{
+    TempDir t;
+    std::error_code ec;
+    fs::create_directories(t.dir(), ec);
+    const std::string nfc = "caf\xC3\xA9.wav";
+    const std::string nfd = "cafe\xCC\x81.wav";
+    CHECK(writeWav(t.file(nfd), ramp(10), 1)); // the disk spells it one way ...
+    writeBytes(t.file("index.txt"), indexOf(nfc + "\t9\t60\tCafe\n")); // ... the index the other
+    if (!fs::equivalent(t.file(nfc), t.file(nfd), ec) || ec)
+        return; // this file system keeps them apart, so they are two files here
+
+    SampleLibrary lib(t.lib);
+    CHECK(lib.open().ok);
+    CHECK_EQ(lib.entries().size(), 1u);
+    CHECK(lib.find(nfc) != nullptr);
+    if (lib.find(nfc))
+    {
+        CHECK_EQ(lib.find(nfc)->slot, 9);
+        CHECK(!lib.find(nfc)->missing);
+    }
+    CHECK(lib.find(nfd) == nullptr);
+}
+
+TEST(unusable_wav_warning_says_why)
+{
+    TempDir t;
+    std::error_code ec;
+    fs::create_directories(t.dir(), ec);
+    CHECK(writeWav(t.file("rate.wav"), ramp(30), 1, 44100));
+    CHECK(writeWav(t.file("three.wav"), ramp(30), 3));
+    writeBytes(t.file("junk.wav"), "this is not a wav file at all");
+    SampleLibrary lib(t.lib);
+    CHECK(lib.open().ok);
+    CHECK(hasWarningWith(lib, "rate.wav: is 44100 Hz, not 48000 Hz"));
+    CHECK(hasWarningWith(lib, "three.wav: has 3 channels"));
+    CHECK(hasWarningWith(lib, "junk.wav: is not a 48 kHz float WAV"));
+}
+
+TEST(oversized_file_is_refused_without_being_loaded)
+{
+    TempDir t;
+    std::error_code ec;
+    fs::create_directories(t.dir(), ec);
+    // 30 MB of zeros: bigger than the longest legal sample, and not a WAV. If it were loaded
+    // the reason would be "not a 48 kHz float WAV" instead.
+    const std::string big(30u * 1000u * 1000u, '\0');
+    writeBytes(t.file("big.wav"), big);
+    writeBytes(t.file("index.txt"), indexOf("listed.wav\t-\t60\tx\n"));
+    writeBytes(t.file("listed.wav"), big);
+
+    SampleLibrary lib(t.lib);
+    CHECK(lib.open().ok);
+    CHECK(lib.find("big.wav") == nullptr);
+    CHECK(hasWarningWith(lib, "big.wav: is longer than 60 seconds"));
+    CHECK(hasWarningWith(lib, "listed.wav: is longer than 60 seconds"));
+    CHECK(lib.find("listed.wav") != nullptr && lib.find("listed.wav")->missing);
+    CHECK_EQ(fs::file_size(t.file("big.wav"), ec), 30000000u);
+    CHECK_EQ(fs::file_size(t.file("listed.wav"), ec), 30000000u);
+}
+
+TEST(failed_save_leaves_memory_unchanged)
+{
+    TempDir t;
+    SampleLibrary lib(t.lib);
+    CHECK(lib.open().ok);
+    std::string a, b;
+    CHECK(lib.add("kick", 1, ramp(20), a).ok);
+    CHECK(lib.add("snare", 2, ramp(40), b).ok);
+    CHECK(lib.assign(a, 5).ok);
+    CHECK(lib.assign(b, 6).ok);
+    const std::string idxBefore = readBytes(t.file("index.txt"));
+
+    auto snapshot = [&]() { return lib.entries(); };
+    auto sameAs = [&](const std::vector<LibraryEntry>& s)
+    {
+        if (s.size() != lib.entries().size())
+            return false;
+        for (std::size_t i = 0; i < s.size(); ++i)
+        {
+            if (!sameEntry(s[i], lib.entries()[i]))
+                return false;
+        }
+        return true;
+    };
+
+    // A folder where the temporary file would go makes every save fail.
+    std::error_code ec;
+    CHECK(fs::create_directory(t.file("index.txt.tmp"), ec));
+    const std::vector<LibraryEntry> before = snapshot();
+
+    CHECK(!lib.assign(a, 9).ok);
+    CHECK(sameAs(before));
+    CHECK(!lib.assign(a, 6).ok); // would have displaced b
+    CHECK(sameAs(before));
+    CHECK(!lib.clearSlot(5).ok);
+    CHECK(sameAs(before));
+    CHECK(!lib.setRootNote(a, 33).ok);
+    CHECK(sameAs(before));
+    CHECK(!lib.rename(a, "renamed").ok);
+    CHECK(sameAs(before));
+    std::string c;
+    CHECK(!lib.add("tom", 1, ramp(8), c).ok);
+    CHECK(c.empty());
+    CHECK(sameAs(before));
+    CHECK(lib.inSlot(5) == lib.find(a));
+    CHECK(lib.inSlot(6) == lib.find(b));
+
+    CHECK(fs::is_directory(t.file("index.txt.tmp"))); // the folder was left alone
+    CHECK(readBytes(t.file("index.txt")) == idxBefore);
+
+    // With the folder gone the same calls work. (The WAV that add() wrote is still there.)
+    fs::remove(t.file("index.txt.tmp"), ec);
+    CHECK(lib.assign(a, 9).ok);
+    CHECK(lib.find(a) != nullptr);
+    if (lib.find(a))
+        CHECK_EQ(lib.find(a)->slot, 9);
+    CHECK(lib.add("tom", 1, ramp(8), c).ok);
+    CHECK(c == "tom-2.wav" || c == "tom.wav");
+}
+
+TEST(first_free_slot_skips_a_slot_a_missing_entry_holds)
+{
+    TempDir t;
+    std::string a, b;
+    {
+        SampleLibrary lib(t.lib);
+        CHECK(lib.open().ok);
+        CHECK(lib.add("a", 1, ramp(10), a).ok);
+        CHECK(lib.add("b", 1, ramp(10), b).ok);
+        CHECK(lib.assign(a, 0).ok);
+        CHECK(lib.assign(b, 2).ok);
+    }
+    std::error_code ec;
+    fs::remove(t.file(a), ec); // this test's own folder
+    SampleLibrary lib(t.lib);
+    CHECK(lib.open().ok);
+    CHECK(lib.find(a) != nullptr && lib.find(a)->missing);
+    if (lib.find(a))
+        CHECK_EQ(lib.find(a)->slot, 0);
+    CHECK_EQ(lib.firstFreeSlot(), 1); // not 0: the missing sample still holds it
+    CHECK(lib.inSlot(0) == lib.find(a));
+}
+
+TEST(add_never_writes_into_an_existing_name)
+{
+#if !defined(_WIN32)
+    // A dangling symlink named like the wanted file: add() must pick another name and must
+    // not create the link's target.
+    TempDir t;
+    const fs::path target = t.root / "created_through_link.wav";
+    std::error_code ec;
+    fs::create_directories(t.dir(), ec);
+    fs::create_symlink(target, t.file("kick.wav"), ec);
+    CHECK(!ec);
+    SampleLibrary lib(t.lib);
+    CHECK(lib.open().ok);
+    std::string f;
+    CHECK(lib.add("kick", 1, ramp(10), f).ok);
+    CHECK(f == "kick-2.wav");
+    CHECK(!fs::exists(target));
+    CHECK(fs::is_symlink(t.file("kick.wav")));
+#endif
+    TempDir t2;
+    SampleLibrary lib2(t2.lib);
+    CHECK(lib2.open().ok);
+    std::string a, b;
+    CHECK(lib2.add("kick", 1, ramp(10), a).ok);
+    const std::string first = readBytes(t2.file(a));
+    CHECK(lib2.add("kick", 1, ramp(12), b).ok);
+    CHECK(a != b);
+    CHECK(readBytes(t2.file(a)) == first);
+    CHECK(!fs::exists(t2.file("index.txt.tmp")));
+}
+
+TEST(read_wav_float_refuses_a_chunk_size_that_would_wrap)
+{
+    TempDir t;
+    std::error_code ec;
+    fs::create_directories(t.dir(), ec);
+    CHECK(writeWav(t.file("a.wav"), ramp(10), 1));
+    std::string bytes = readBytes(t.file("a.wav"));
+    // The data chunk size field (offset 40) set to nearly 4 GiB.
+    for (int i = 0; i < 4; ++i)
+        bytes[40 + static_cast<std::size_t>(i)] = static_cast<char>(i == 0 ? 0xF0 : 0xFF);
+    writeBytes(t.file("b.wav"), bytes);
+    std::vector<float> s;
+    int ch = 0, rate = 0;
+    CHECK(!readWav(t.file("b.wav"), s, ch, rate));
+    CHECK(readWav(t.file("a.wav"), s, ch, rate));
+}
+
 
 PHYLO_TEST_MAIN

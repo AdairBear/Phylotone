@@ -7,12 +7,23 @@
 //    of a file that is already there.
 //  - The index is `index.txt` in the folder. It is written to a temporary file and renamed
 //    into place, so a crash during a save leaves the old index, not half of a new one.
-//  - An index that cannot be fully read is copied to `index.txt.bad` before it is replaced.
+//  - The index is only ever written through plain files. If `index.txt` or `index.txt.tmp`
+//    is a symlink or a folder, nothing is written through it and the save fails with a
+//    message naming the file; the symlink or folder is left alone.
+//  - An index that cannot be fully read (damaged lines, an unknown first line, a file over
+//    1 MiB) is copied to `index.txt.bad` before it is replaced. The copy never overwrites an
+//    earlier one: the next is `index.txt.bad-2`, then `-3`, and so on. A UTF-8 byte order
+//    mark before the first line is ignored.
+//  - An index whose first line starts with `phylotone.samples.index.` but is not exactly
+//    `...v1` came from a newer version. open() fails with a message, leaves the file
+//    untouched and the library empty, and nothing in this object saves until the next open().
 //  - A file listed in the index that is missing from the folder stays in the index, marked
 //    missing, and keeps its slot. It is not sent. If the file comes back, so does the slot.
 //  - A WAV placed in the folder by hand is adopted on open (unassigned) when it is already
 //    48 kHz float, mono or stereo, 1 frame to 60 s. Any other file is left alone and
-//    reported in warnings().
+//    reported in warnings(). So is a file whose name the index cannot hold (a control
+//    character, a backslash, ':'), and a file that is the same file as a listed one under
+//    another spelling (Unicode form, case) is not listed a second time.
 //
 // Index format, UTF-8 text, one line per sample, fields separated by a tab:
 //
@@ -100,11 +111,13 @@ public:
 
 private:
     LibraryResult saveIndex();
+    static std::string newerIndexMessage();
 
     std::string folder_;
     std::vector<LibraryEntry> entries_;
     std::vector<std::string> warnings_;
     bool indexDamaged_ = false; // the index on disk had lines that could not be read
+    bool newerIndex_ = false;   // the index on disk is from a newer version; never replace it
 };
 
 } // namespace phylo::samples

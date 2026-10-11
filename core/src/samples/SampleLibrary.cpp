@@ -4,6 +4,8 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -21,7 +23,10 @@ namespace fs = std::filesystem;
 
 constexpr char kIndexTempName[] = "index.txt.tmp";
 constexpr char kIndexBadName[] = "index.txt.bad";
+constexpr char kIndexHeaderPrefix[] = "phylotone.samples.index.";
 constexpr std::size_t kMaxStemChars = 48;
+constexpr std::size_t kMaxIndexBytes = 1u << 20; // a bigger index is not one of ours
+constexpr int kMaxBackupTries = 1000;
 
 fs::path toPath(const std::string& utf8)
 {
@@ -51,10 +56,28 @@ std::string lowered(const std::string& s)
     return r;
 }
 
+// index.txt.bad, index.txt.bad-2, index.txt.bad-3, ...
+bool isBackupName(const std::string& l)
+{
+    const std::size_t base = sizeof(kIndexBadName) - 1;
+    if (l.compare(0, base, kIndexBadName) != 0)
+        return false;
+    if (l.size() == base)
+        return true;
+    if (l[base] != '-' || l.size() == base + 1)
+        return false;
+    for (std::size_t i = base + 1; i < l.size(); ++i)
+    {
+        if (l[i] < '0' || l[i] > '9')
+            return false;
+    }
+    return true;
+}
+
 bool isReservedFileName(const std::string& file)
 {
     const std::string l = lowered(file);
-    return l == kIndexFileName || l == kIndexTempName || l == kIndexBadName;
+    return l == kIndexFileName || l == kIndexTempName || isBackupName(l);
 }
 
 // A file name from the index must stay inside the folder and not be one of our own files.
@@ -62,7 +85,9 @@ bool isSafeFileName(const std::string& file)
 {
     if (file.empty() || file == "." || file == "..")
         return false;
-    if (file.find('/') != std::string::npos || file.find('\\') != std::string::npos)
+    // ':' would make a drive-relative path or an alternate data stream on Windows.
+    if (file.find('/') != std::string::npos || file.find('\\') != std::string::npos ||
+        file.find(':') != std::string::npos)
         return false;
     for (char c : file)
     {
@@ -78,10 +103,11 @@ std::string cleanName(const std::string& name)
     return sanitiseSampleName(name);
 }
 
-// Windows refuses files named after old device names, whatever the extension.
+// Windows refuses files named after old device names, whatever the extension: "con.kit.wav"
+// is the device too, so only the part before the first '.' counts.
 bool isDeviceName(const std::string& stem)
 {
-    const std::string l = lowered(stem);
+    const std::string l = lowered(stem.substr(0, stem.find('.')));
     if (l == "con" || l == "prn" || l == "aux" || l == "nul")
         return true;
     return l.size() == 4 && (l.compare(0, 3, "com") == 0 || l.compare(0, 3, "lpt") == 0) &&
@@ -102,7 +128,7 @@ std::string makeStem(const std::string& cleaned)
     if (stem.size() > kMaxStemChars)
         stem.resize(kMaxStemChars);
     if (isDeviceName(stem))
-        stem.push_back('_');
+        stem.insert(stem.find('.') == std::string::npos ? stem.size() : stem.find('.'), 1, '_');
     return stem;
 }
 
@@ -218,6 +244,52 @@ bool hasWavExtension(const fs::path& p)
     return lowered(toUtf8(p.extension())) == ".wav";
 }
 
+enum class Kind
+{
+    Absent,
+    Regular,
+    Other // a symlink (even a dangling one), a folder, or anything we cannot tell
+};
+
+// Looks at the path itself, never through a symlink.
+Kind kindOf(const fs::path& p)
+{
+    std::error_code ec;
+    const fs::file_status st = fs::symlink_status(p, ec);
+    if (st.type() == fs::file_type::not_found)
+        return Kind::Absent;
+    if (ec)
+        return Kind::Other;
+    return st.type() == fs::file_type::regular ? Kind::Regular : Kind::Other;
+}
+
+// Why one of our files cannot be written, or empty. A symlink or folder in the place of one
+// of our files is the user's: we never write through it and never remove it.
+std::string saveBlock(const fs::path& dir, const char* name)
+{
+    if (kindOf(dir / name) == Kind::Other)
+        return std::string(name) + " in " + toUtf8(dir) +
+               " is a symlink or a folder, not a plain file, so it was left alone";
+    return {};
+}
+
+// Creates `path` for writing only if nothing is there (any kind of entry). 1 = created,
+// 0 = the name is taken, -1 = could not create.
+int createExclusive(const fs::path& path)
+{
+#ifdef _WIN32
+    std::FILE* f = nullptr;
+    const errno_t err = _wfopen_s(&f, path.c_str(), L"wbx");
+    if (err != 0 || f == nullptr)
+        return err == EEXIST ? 0 : -1;
+#else
+    std::FILE* f = std::fopen(path.c_str(), "wbx");
+    if (f == nullptr)
+        return errno == EEXIST ? 0 : -1;
+#endif
+    return std::fclose(f) == 0 ? 1 : -1;
+}
+
 } // namespace
 
 SampleLibrary::SampleLibrary(std::string folder) : folder_(std::move(folder)) {}
@@ -227,6 +299,7 @@ LibraryResult SampleLibrary::open()
     entries_.clear();
     warnings_.clear();
     indexDamaged_ = false;
+    newerIndex_ = false;
 
     try
     {
@@ -239,17 +312,36 @@ LibraryResult SampleLibrary::open()
         // Read the index, if there is one.
         const fs::path indexPath = dir / kIndexFileName;
         bool haveIndex = fs::exists(indexPath, ec);
+        {
+            const std::string blocked = saveBlock(dir, kIndexFileName);
+            if (!blocked.empty())
+                warnings_.push_back("the index cannot be saved: " + blocked);
+        }
         if (haveIndex)
         {
             std::ifstream in(indexPath, std::ios::binary);
-            if (!in)
+            std::string text;
+            if (in)
+            {
+                // Read at most one byte more than allowed, so a huge file is never loaded.
+                text.resize(kMaxIndexBytes + 1);
+                in.read(&text[0], static_cast<std::streamsize>(text.size()));
+                text.resize(static_cast<std::size_t>(in.gcount()));
+            }
+            if (!in && text.empty() && !in.eof())
             {
                 warnings_.push_back("the index cannot be read; it will be kept as a .bad copy");
                 indexDamaged_ = true;
             }
+            else if (text.size() > kMaxIndexBytes)
+            {
+                warnings_.push_back("the index is larger than 1 MiB and was not read; it will be kept as a .bad copy");
+                indexDamaged_ = true;
+            }
             else
             {
-                const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+                if (text.compare(0, 3, "\xEF\xBB\xBF") == 0)
+                    text.erase(0, 3); // a UTF-8 byte order mark
                 std::vector<std::string> lines;
                 std::size_t start = 0;
                 while (start < text.size())
@@ -264,6 +356,16 @@ LibraryResult SampleLibrary::open()
                     start = end + 1;
                 }
 
+                if (!lines.empty() && lines[0] != kIndexHeader &&
+                    lines[0].compare(0, sizeof(kIndexHeaderPrefix) - 1, kIndexHeaderPrefix) == 0)
+                {
+                    // A newer Phylotone wrote this. An older one must not replace it.
+                    newerIndex_ = true;
+                    entries_.clear();
+                    const std::string why = newerIndexMessage();
+                    warnings_.push_back(why);
+                    return LibraryResult::failure(why);
+                }
                 if (lines.empty() || lines[0] != kIndexHeader)
                 {
                     warnings_.push_back("the index has an unknown first line and was not read");
@@ -389,15 +491,33 @@ LibraryResult SampleLibrary::open()
         }
         std::sort(candidates.begin(), candidates.end());
 
+        const std::size_t indexed = entries_.size(); // entries that came from the index
         bool adopted = false;
         for (const std::string& name : candidates)
         {
+            if (!isSafeFileName(name))
+            {
+                // The index could not hold this name, so it would lose its slot at every restart.
+                warnings_.push_back(name + ": rename the file to import it (the name has characters the index cannot hold)");
+                continue;
+            }
+            // The same file under another spelling (Unicode form, case) is already listed.
+            bool listed = false;
+            for (std::size_t i = 0; i < indexed && !listed; ++i)
+            {
+                std::error_code qe;
+                if (!entries_[i].missing && fs::equivalent(dir / toPath(name), dir / toPath(entries_[i].file), qe) && !qe)
+                    listed = true;
+            }
+            if (listed)
+                continue;
+
             std::vector<float> samples;
             int ch = 0;
             std::string why;
             if (!loadUsable(dir / toPath(name), samples, ch, why))
             {
-                warnings_.push_back(name + ": not a 48 kHz float WAV; import it through the app");
+                warnings_.push_back(name + ": " + why + "; import it through the app");
                 continue;
             }
             LibraryEntry e;
@@ -423,10 +543,18 @@ LibraryResult SampleLibrary::open()
     return {};
 }
 
+std::string SampleLibrary::newerIndexMessage()
+{
+    return "the sample index was written by a newer version of Phylotone; it was left as it is";
+}
+
 LibraryResult SampleLibrary::saveIndex()
 {
     try
     {
+        if (newerIndex_)
+            return LibraryResult::failure(newerIndexMessage());
+
         std::string text = kIndexHeader;
         text += '\n';
         for (const LibraryEntry& e : entries_)
@@ -446,12 +574,25 @@ LibraryResult SampleLibrary::saveIndex()
         const fs::path tmpPath = dir / kIndexTempName;
         std::error_code ec;
 
+        // Never write through, or replace, a symlink or folder the user put where our files go.
+        for (const char* name : {kIndexFileName, kIndexTempName})
         {
+            const std::string blocked = saveBlock(dir, name);
+            if (!blocked.empty())
+                return LibraryResult::failure("cannot write the sample index: " + blocked);
+        }
+        // A stale temporary file of ours is replaced, not written into (it could be a hard link).
+        if (kindOf(tmpPath) == Kind::Regular)
+            fs::remove(tmpPath, ec);
+
+        {
+            if (createExclusive(tmpPath) != 1)
+                return LibraryResult::failure("cannot write the sample index in " + folder_);
             std::ofstream out(tmpPath, std::ios::binary | std::ios::trunc);
             if (out)
             {
                 out.write(text.data(), static_cast<std::streamsize>(text.size()));
-                out.flush();
+                out.close(); // flushes, so a full disk is noticed
             }
             if (!out)
             {
@@ -461,10 +602,21 @@ LibraryResult SampleLibrary::saveIndex()
             }
         }
 
-        if (indexDamaged_ && fs::exists(indexPath, ec))
+        if (indexDamaged_ && kindOf(indexPath) == Kind::Regular)
         {
-            fs::copy_file(indexPath, dir / kIndexBadName, fs::copy_options::overwrite_existing, ec);
-            if (ec)
+            // Keep the damaged index under a name nobody has used: an earlier backup may hold
+            // the only copy of the real slot assignments.
+            bool kept = false;
+            for (int n = 1; n <= kMaxBackupTries && !kept; ++n)
+            {
+                const fs::path bad =
+                    n == 1 ? dir / kIndexBadName : dir / (std::string(kIndexBadName) + "-" + std::to_string(n));
+                if (kindOf(bad) != Kind::Absent)
+                    continue;
+                std::error_code ce;
+                kept = fs::copy_file(indexPath, bad, fs::copy_options::none, ce) && !ce;
+            }
+            if (!kept)
             {
                 fs::remove(tmpPath, ec);
                 return LibraryResult::failure("cannot keep a copy of the damaged index (index.txt.bad)");
@@ -505,11 +657,19 @@ LibraryResult SampleLibrary::add(const std::string& name, int channels, const st
         if (!allFinite(samples))
             return LibraryResult::failure("the sample contains values that are not finite numbers");
 
+        if (newerIndex_)
+            return LibraryResult::failure(newerIndexMessage());
+
         const fs::path dir = toPath(folder_);
         std::error_code ec;
         fs::create_directories(dir, ec);
         if (!fs::is_directory(dir, ec))
             return LibraryResult::failure("cannot create the sample folder " + folder_);
+        {
+            const std::string blocked = saveBlock(dir, kIndexFileName);
+            if (!blocked.empty())
+                return LibraryResult::failure("cannot write the sample index: " + blocked);
+        }
 
         // Names already in use, compared without case: macOS and Windows ignore it.
         std::set<std::string> taken;
@@ -522,20 +682,27 @@ LibraryResult SampleLibrary::add(const std::string& name, int channels, const st
 
         const std::string cleaned = cleanName(name);
         const std::string stem = makeStem(cleaned);
+        // Reserve the name with an exclusive create, so a file that appears after the check
+        // above is never truncated. The file made here is ours to fill or to remove.
         std::string file;
+        fs::path target;
         for (int n = 1;; ++n)
         {
             file = n == 1 ? stem + ".wav" : stem + "-" + std::to_string(n) + ".wav";
-            std::error_code xe;
-            if (taken.count(lowered(file)) == 0 && !fs::exists(dir / toPath(file), xe))
+            if (taken.count(lowered(file)) != 0)
+                continue;
+            target = dir / toPath(file);
+            const int made = createExclusive(target);
+            if (made == 1)
                 break;
+            if (made < 0)
+                return LibraryResult::failure("cannot write " + file);
         }
 
-        const fs::path target = dir / toPath(file);
         if (!writeWavFloat(toUtf8(target), samples, channels, static_cast<int>(kSampleRateHz)))
         {
             std::error_code re;
-            fs::remove(target, re); // the partial file this call just created
+            fs::remove(target, re); // the file this call just created
             return LibraryResult::failure("cannot write " + file);
         }
 

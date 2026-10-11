@@ -221,6 +221,36 @@ double maxSineError(const std::vector<float>& got, double freq, double amp, std:
     return worst;
 }
 
+// Level of the tone at `freq` in the middle of `x` (the first and last tenth are ignored), as
+// the amplitude of a sine, found with a single-bin DFT.
+double toneAmplitude(const std::vector<float>& x, double freq, double rate)
+{
+    const std::size_t a = x.size() / 10;
+    const std::size_t b = x.size() - a;
+    double re = 0.0, im = 0.0;
+    for (std::size_t i = a; i < b; ++i)
+    {
+        const double ph = 2.0 * kPi * freq * static_cast<double>(i) / rate;
+        re += static_cast<double>(x[i]) * std::cos(ph);
+        im += static_cast<double>(x[i]) * std::sin(ph);
+    }
+    return 2.0 * std::sqrt(re * re + im * im) / static_cast<double>(b - a);
+}
+
+double toDb(double ratio)
+{
+    return 20.0 * std::log10(ratio + 1e-30);
+}
+
+// 16-bit mono silence of `frames` frames.
+WavSpec silence16(std::uint32_t rate, std::uint64_t frames)
+{
+    WavSpec s;
+    s.rate = rate;
+    s.data.assign(static_cast<std::size_t>(frames) * 2u, 0);
+    return s;
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------------------
@@ -476,6 +506,69 @@ TEST(resample_downsampling_removes_tone_above_nyquist)
     CHECK(rms < 0.01 * inRms);
 }
 
+TEST(resample_stopband_96k_tone_above_nyquist)
+{
+    // 25 kHz at full scale would alias to 23 kHz; it must be at least 60 dB down (the filter
+    // gives about 90).
+    const int rate = 96000;
+    const std::vector<float> in = sine(rate / 4, 25000.0, rate, 1.0);
+    const std::vector<float> out = resampleTo48k(in, 1, rate);
+    double sumSq = 0.0;
+    std::size_t n = 0;
+    for (std::size_t i = 300; i + 300 < out.size(); ++i, ++n)
+        sumSq += static_cast<double>(out[i]) * static_cast<double>(out[i]);
+    const double rms = std::sqrt(sumSq / static_cast<double>(n));
+    CHECK(toDb(rms / (1.0 / std::sqrt(2.0))) < -60.0);
+    CHECK(toDb(toneAmplitude(out, 23000.0, 48000.0)) < -60.0);
+
+    // Just above 24 kHz too.
+    const std::vector<float> near = resampleTo48k(sine(rate / 4, 24500.0, rate, 1.0), 1, rate);
+    CHECK(toDb(toneAmplitude(near, 23500.0, 48000.0)) < -60.0);
+}
+
+TEST(resample_44k_tone_near_nyquist_leaves_no_image)
+{
+    // A 21.5 kHz tone at 44.1 kHz images at 44100 - 21500 = 22600 Hz once the rate goes up.
+    const int rate = 44100;
+    const std::vector<float> out = resampleTo48k(sine(rate / 4, 21500.0, rate, 1.0), 1, rate);
+    CHECK(toDb(toneAmplitude(out, 22600.0, 48000.0)) < -60.0);
+    // And at 22.0 kHz (image at 22.1 kHz), the closest a tone can get to the Nyquist.
+    const std::vector<float> edge = resampleTo48k(sine(rate / 4, 22000.0, rate, 1.0), 1, rate);
+    CHECK(toDb(toneAmplitude(edge, 22100.0, 48000.0)) < -60.0);
+}
+
+TEST(resample_passband_is_flat)
+{
+    const int rates[] = {44100, 96000};
+    const double freqs[] = {1000.0, 18000.0, 20000.0};
+    for (int rate : rates)
+    {
+        for (double f : freqs)
+        {
+            const std::vector<float> out = resampleTo48k(sine(rate / 4, f, rate, 0.8), 1, rate);
+            const double db = toDb(toneAmplitude(out, f, 48000.0) / 0.8);
+            if (std::fabs(db) >= 0.1)
+                std::printf("  %d Hz source, %g Hz tone: %g dB\n", rate, f, db);
+            CHECK(std::fabs(db) < 0.1);
+        }
+    }
+}
+
+TEST(resample_one_frame_is_never_emptied)
+{
+    const int rates[] = {192000, 176400, 96001, 96000, 88200, 64000};
+    for (int rate : rates)
+    {
+        ImportedSample out;
+        const ImportResult r = run(buildWav(pcm16(1, static_cast<std::uint32_t>(rate), {16384})), out);
+        CHECK(r.ok());
+        CHECK_EQ(out.frames(), 1u);
+        if (out.frames() == 1)
+            CHECK(std::fabs(out.samples[0] - 0.5f) < 1e-4f); // a single value is held
+    }
+    CHECK_EQ(resampleTo48k(std::vector<float>{0.5f, -0.5f}, 2, 192000).size(), 2u); // one stereo frame
+}
+
 TEST(resample_deterministic)
 {
     const std::vector<float> in = sine(4410, 1234.5, 44100.0, 0.6, 2);
@@ -529,8 +622,48 @@ TEST(length_61s_at_44k_too_long)
     const ImportResult r = run(buildWav(s), out);
     CHECK(r.code == ImportError::TooLong);
     CHECK(r.message.find("60 s") != std::string::npos);
-    CHECK(r.message.find("61.0") != std::string::npos);
+    CHECK(r.message.find("61.00 s") != std::string::npos);
     CHECK(out.samples.empty());
+}
+
+TEST(length_message_never_rounds_down_to_the_limit)
+{
+    ImportedSample out;
+    ImportResult r = run(buildWav(silence16(48000, 2880001)), out);
+    CHECK(r.code == ImportError::TooLong);
+    CHECK(r.message.find("60.01 s") != std::string::npos);
+    CHECK(r.message.find("(60.0 s)") == std::string::npos);
+    CHECK(r.message.find("(60.00 s)") == std::string::npos);
+
+    // 44.1 kHz: one frame over is 60.0000227 s, which still shows as 60.01.
+    r = run(buildWav(silence16(44100, 44100u * 60u + 1u)), out);
+    CHECK(r.code == ImportError::TooLong);
+    CHECK(r.message.find("60.01 s") != std::string::npos);
+
+    // Two decimals with a leading zero in the fraction.
+    r = run(buildWav(silence16(8000, 8000u * 61u + 40u)), out); // 61.005 s
+    CHECK(r.code == ImportError::TooLong);
+    CHECK(r.message.find("61.01 s") != std::string::npos);
+    r = run(buildWav(silence16(8000, 8000u * 61u)), out); // exactly 61 s
+    CHECK(r.message.find("61.00 s") != std::string::npos);
+}
+
+TEST(length_boundary_at_other_rates)
+{
+    // Exactly 60 s is accepted and one more frame is refused, at every kind of rate. The
+    // accept case needs the resampler, so it is run once per rate with silence.
+    const std::uint32_t rates[] = {8000, 22050, 96000, 192000};
+    for (std::uint32_t rate : rates)
+    {
+        ImportedSample out;
+        const ImportResult over = run(buildWav(silence16(rate, 60ull * rate + 1u)), out);
+        CHECK(over.code == ImportError::TooLong);
+        CHECK(out.samples.empty());
+
+        const ImportResult ok = run(buildWav(silence16(rate, 60ull * rate)), out);
+        CHECK(ok.ok());
+        CHECK_EQ(out.frames(), 2880000u);
+    }
 }
 
 TEST(length_exactly_60s_at_44k_accepted)
@@ -554,12 +687,17 @@ TEST(length_header_claims_more_than_data)
     ImportedSample out;
     const ImportResult r = run(buildWav(s), out);
     CHECK(!r.ok());
-    CHECK(r.code == ImportError::TooLong || r.code == ImportError::Damaged);
+    CHECK(r.code == ImportError::Damaged); // the chunk runs past the end of the file
     CHECK(out.samples.empty());
 
     // And a data size of nearly 4 GiB.
     s.declaredDataSize = 0xFFFFFFFFll;
-    CHECK(!run(buildWav(s), out).ok());
+    CHECK(run(buildWav(s), out).code == ImportError::Damaged);
+    CHECK(out.samples.empty());
+
+    // When the data really is there, the same header is refused for its length instead.
+    WavSpec full = silence16(48000, 48000ull * 61);
+    CHECK(run(buildWav(full), out).code == ImportError::TooLong);
     CHECK(out.samples.empty());
 }
 

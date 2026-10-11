@@ -36,7 +36,7 @@ enum class ImportError
 };
 
 // `message` is the reason for the status line, for example
-// "longer than 60 s (61.0 s)" or "8-bit PCM is not supported (16-bit, 24-bit or 32-bit float)".
+// "longer than 60 s (61.00 s)" or "8-bit PCM is not supported (16-bit, 24-bit or 32-bit float)".
 struct ImportResult
 {
     ImportError code = ImportError::None;
@@ -68,10 +68,17 @@ ImportResult importWavBytes(const std::uint8_t* data, std::size_t size, Imported
 // too large to be a 60 s sample in any supported format is refused before it is loaded.
 ImportResult importWavFile(const std::string& path, ImportedSample& out);
 
-// Converts interleaved audio to 48 kHz with a band-limited (windowed-sinc) resampler. At
-// 48 kHz the input is returned unchanged, bit for bit. The output has
-// round(frames * 48000 / sourceRate) frames. Deterministic: the same input gives the same
-// output on every run.
+// Converts interleaved audio to 48 kHz with a band-limited (Kaiser-windowed sinc) resampler.
+// At 48 kHz the input is returned unchanged, bit for bit. The output has
+// round(frames * 48000 / sourceRate) frames, but at least one frame for a non-empty input
+// and at most 60 s (2 880 000 frames). Deterministic: the same input gives the same output
+// on every run.
+//
+// The low-pass filter's transition band ends at the lower of the source Nyquist and 24 kHz,
+// and it is flat to within 0.1 dB up to about 20 kHz (for 44.1 kHz and 96 kHz sources).
+// Content from that Nyquist up is attenuated by about 80 dB, so it aliases (downsampling) or
+// images (upsampling) only at about -80 dB. Content between roughly 20 kHz and that
+// Nyquist is attenuated, not preserved.
 std::vector<float> resampleTo48k(const std::vector<float>& interleaved, int channels, int sourceRate);
 
 } // namespace phylo::samples
