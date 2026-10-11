@@ -73,7 +73,8 @@ juce_add_console_app(phylo-plughost
 )
 juce_generate_juce_header(phylo-plughost)
 target_sources(phylo-plughost PRIVATE plughost/PluginHostMain.cpp)
-target_compile_definitions(phylo-plughost PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_PLUGINHOST_VST3=1)
+target_compile_definitions(phylo-plughost PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_PLUGINHOST_VST3=1
+    JUCE_MODAL_LOOPS_PERMITTED=1) # the host pumps the message loop by hand while it waits for input
 target_link_libraries(phylo-plughost PRIVATE
     phylo_core
     juce::juce_audio_processors
@@ -177,3 +178,37 @@ target_compile_options(phylo_app_checks PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-Wall -Wextra -Wpedantic>
     $<$<CXX_COMPILER_ID:MSVC>:/W4>
 )
+
+# End-to-end check of sample delivery against a real Akazi XL VST3 (docs/SAMPLE_INTERFACE.md).
+# Registered only when PHYLO_AKAZI_VST3 names the plugin bundle, so CI (no plugin) skips it:
+#   cmake ... -DPHYLO_AKAZI_VST3="/path/to/Akazi XL.vst3"
+# PHYLO_AKAZI_VST3_OLD names a build without sample-set support (optional). The full-budget
+# case (about 60 MiB, slow) is its own test and runs only when PHYLO_AKAZI_BUDGET is ON.
+set(PHYLO_AKAZI_VST3 "" CACHE STRING "Akazi XL VST3 bundle for the end-to-end sample delivery check")
+set(PHYLO_AKAZI_VST3_OLD "" CACHE STRING "Akazi XL VST3 bundle without sample-set support (optional)")
+option(PHYLO_AKAZI_BUDGET "Also run the full-budget (about 60 MiB) end-to-end case" OFF)
+if(PHYLO_AKAZI_VST3 OR PHYLO_AKAZI_VST3_OLD)
+    add_executable(phylo_akazi_e2e_check
+        src/host/AkaziE2ECheck.cpp
+        src/host/PluginHostSupervisor.cpp
+        src/host/ProcessPipe.cpp
+    )
+    target_include_directories(phylo_akazi_e2e_check PRIVATE src/host)
+    target_link_libraries(phylo_akazi_e2e_check PRIVATE phylo_core Threads::Threads)
+    add_dependencies(phylo_akazi_e2e_check phylo-plughost)
+endif()
+if(PHYLO_AKAZI_VST3)
+    add_test(NAME phylo_akazi_e2e
+        COMMAND phylo_akazi_e2e_check $<TARGET_FILE:phylo-plughost> "${PHYLO_AKAZI_VST3}" sound)
+    set_tests_properties(phylo_akazi_e2e PROPERTIES TIMEOUT 300)
+    if(PHYLO_AKAZI_BUDGET)
+        add_test(NAME phylo_akazi_e2e_budget
+            COMMAND phylo_akazi_e2e_check $<TARGET_FILE:phylo-plughost> "${PHYLO_AKAZI_VST3}" budget)
+        set_tests_properties(phylo_akazi_e2e_budget PROPERTIES TIMEOUT 600)
+    endif()
+endif()
+if(PHYLO_AKAZI_VST3_OLD)
+    add_test(NAME phylo_akazi_e2e_old
+        COMMAND phylo_akazi_e2e_check $<TARGET_FILE:phylo-plughost> "${PHYLO_AKAZI_VST3_OLD}" old)
+    set_tests_properties(phylo_akazi_e2e_old PROPERTIES TIMEOUT 300)
+endif()

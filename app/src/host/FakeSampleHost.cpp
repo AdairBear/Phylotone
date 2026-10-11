@@ -1,9 +1,11 @@
 // A stand-in plugin host for the sample send check. Plain C++, no JUCE.
 //
-// Speaks the phylo-plughost wire protocol on stdin/stdout and answers SetState the way
-// docs/SAMPLE_INTERFACE.md asks of the plugin side: a sample blob is validated, and a bad
-// one is refused with its reason while the current slots stay. Anything else is taken as
-// the plugin's own state. This is test machinery, not a plugin.
+// Speaks the phylo-plughost wire protocol on stdin/stdout and stands in for the host and the
+// plugin together. It answers SetState the way docs/SAMPLE_INTERFACE.md ("The answer") says
+// the app sees it: a sample blob is validated, a bad one is refused with its reason while the
+// current slots stay, and an EMPTY answer means "the plugin loaded the set" (it did: this
+// process holds the slots). Anything else is taken as the plugin's own state. This is test
+// machinery, not a plugin.
 //
 // So the check can see what the host holds, every sample of every Process answer is
 //   (number of loaded slots) + 1000 if a non-blob state has been restored.

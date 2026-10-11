@@ -18,7 +18,10 @@
 //  - PipelinedRenderer sends blobs without ever holding up submit() or take(), and its status
 //    follows what the host did, also when a restart sends the set again.
 // Against the real phylo-plughost with no plugin loaded it checks that a bad blob gets its
-// own reason, and a good one is refused because no plugin is loaded.
+// own reason, and a good one is refused because no plugin is loaded (an empty answer would
+// now mean "the plugin loaded it", which cannot happen without a plugin). With the host's
+// test hook PHYLO_HOST_SKIP_BLOB_CHECK=1 a bad blob gets past the host's own check and meets
+// the missing plugin too.
 //
 // The fake host misbehaves on request through environment variables (see FakeSampleHost.cpp).
 // The check sets them in its own process before it starts a supervisor; children inherit them.
@@ -708,6 +711,37 @@ void checkRealHost(const char* realHost)
         silent = silent && f == 0.0f;
     CHECK(silent);
     CHECK(sup.state() == PluginHostSupervisor::State::Running);
+
+    // Plain plugin state (not a sample blob) keeps its own path: no plugin, so it is refused
+    // for that reason, never with a sample-set wording.
+    CHECK(!sup.setState({'<', 'x', '/', '>'}));
+    CHECK(contains(sup.lastError(), "no plugin loaded"));
+}
+
+// The test hook: the host does not check the blob itself, so a bad blob is not refused for
+// its fault but passes on, and with no plugin loaded meets "no plugin loaded". Without the
+// hook (the default) the same blob is refused for its fault.
+void checkSkipBlobCheckHook(const char* realHost)
+{
+    {
+        EnvGuard skip("PHYLO_HOST_SKIP_BLOB_CHECK", "1");
+        PluginHostSupervisor sup(realHost, "");
+        std::vector<float> out;
+        sup.render(block(), out);
+        CHECK(sup.state() == PluginHostSupervisor::State::Running);
+        CHECK(!sup.setSamples(faulty({0}, BlobFault::SlotOutOfRange)));
+        CHECK(contains(sup.lastSamplesError(), "no plugin loaded"));
+        CHECK(!contains(sup.lastSamplesError(), "out of range"));
+        CHECK(sup.state() == PluginHostSupervisor::State::Running);
+    }
+    {
+        EnvGuard skip("PHYLO_HOST_SKIP_BLOB_CHECK", "0"); // only "1" turns it on
+        PluginHostSupervisor sup(realHost, "");
+        std::vector<float> out;
+        sup.render(block(), out);
+        CHECK(!sup.setSamples(faulty({0}, BlobFault::SlotOutOfRange)));
+        CHECK(contains(sup.lastSamplesError(), "out of range"));
+    }
 }
 } // namespace
 
@@ -743,6 +777,7 @@ int main(int argc, char** argv)
     checkRendererStatusAfterRestart(argv[1]);
     checkSendFromAnotherThread(argv[1]);
     checkRealHost(argv[2]);
+    checkSkipBlobCheckHook(argv[2]);
 
     std::printf("sample send check: %d checks, %d failed\n", checks, failures);
     return failures == 0 ? 0 : 1;

@@ -7,14 +7,25 @@
 // Limits in this slice: the sample rate is fixed at 48 kHz and the largest block
 // is 4096 frames. Both are sent in Hello so the app can check them.
 
+#include "phylo/host/Fnv1a.h"
+#include "phylo/host/Vst3Preset.h"
 #include "phylo/host/Wire.h"
 #include "phylo/samples/SampleBlob.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include <algorithm>
+#include <chrono>
+#include <condition_variable>
+#include <deque>
+#include <mutex>
+#include <thread>
 #include <cstdio>
+#include <cstdlib>
+#include <functional>
 #include <memory>
+#include <string>
+#include <vector>
 
 #if defined(_WIN32)
   #include <fcntl.h>
@@ -40,6 +51,94 @@ void writeError(const std::string& text)
 {
     writeFrame(phylo::host::MsgType::Error, phylo::host::encodeText(text));
 }
+
+// The answer for a sample set the plugin did not take: an old Akazi XL, or any other plugin.
+const char kPluginDidNotTake[] = "the plugin did not take the sample set";
+
+// Test hook: PHYLO_HOST_SKIP_BLOB_CHECK=1 skips this host's own check of a sample blob, so a
+// bad blob reaches the plugin and the plugin's own refusal can be seen. Not for normal use.
+bool skipBlobCheck()
+{
+    const char* value = std::getenv("PHYLO_HOST_SKIP_BLOB_CHECK");
+    return value != nullptr && std::string(value) == "1";
+}
+
+// Calls `use` with the plugin's VST3 client, if it has one. The client object only lives for
+// the duration of the visit, so all work with it happens inside `use`.
+struct Vst3Visitor : juce::ExtensionsVisitor
+{
+    explicit Vst3Visitor(std::function<void(const VST3Client&)> f) : use(std::move(f)) {}
+    void visitVST3Client(const VST3Client& client) override
+    {
+        visited = true;
+        use(client);
+    }
+    std::function<void(const VST3Client&)> use;
+    bool visited = false;
+};
+
+// Reads stdin on its own thread so the main (message) thread can keep the plugin's message
+// loop running while it waits. Plugins use message-thread timers and async updates (for
+// example to apply a MIDI Program Change); they never fire if the main thread sits in a
+// blocking read. The queue is bounded, so a fast writer waits instead of filling memory.
+class StdinReader
+{
+public:
+    StdinReader() : thread_([this] { run(); }) { thread_.detach(); }
+
+    // Waits up to `waitMs` for input. Appends what arrived to `out`. Returns false once the
+    // app has closed the pipe and everything it sent has been handed over.
+    bool poll(std::vector<std::uint8_t>& out, int waitMs)
+    {
+        std::unique_lock<std::mutex> lock(mutex_);
+        ready_.wait_for(lock, std::chrono::milliseconds(waitMs), [this] { return !queue_.empty() || eof_; });
+        while (!queue_.empty())
+        {
+            out.insert(out.end(), queue_.front().begin(), queue_.front().end());
+            queuedBytes_ -= queue_.front().size();
+            queue_.pop_front();
+        }
+        space_.notify_all();
+        return !(eof_ && out.empty());
+    }
+
+private:
+    static constexpr std::size_t kMaxQueuedBytes = 8u * 1024u * 1024u;
+
+    void run()
+    {
+        std::vector<std::uint8_t> chunk(64 * 1024);
+        for (;;)
+        {
+            // read() returns what is available now. fread() would wait for a full buffer,
+            // which a live pipe may never deliver.
+#if defined(_WIN32)
+            const int n = _read(_fileno(stdin), chunk.data(), static_cast<unsigned int>(chunk.size()));
+#else
+            const ssize_t n = read(STDIN_FILENO, chunk.data(), chunk.size());
+#endif
+            std::unique_lock<std::mutex> lock(mutex_);
+            if (n <= 0)
+            {
+                eof_ = true;
+                ready_.notify_all();
+                return;
+            }
+            space_.wait(lock, [this] { return queuedBytes_ < kMaxQueuedBytes; });
+            queue_.emplace_back(chunk.begin(), chunk.begin() + n);
+            queuedBytes_ += static_cast<std::size_t>(n);
+            ready_.notify_all();
+        }
+    }
+
+    std::mutex mutex_;
+    std::condition_variable ready_;
+    std::condition_variable space_;
+    std::deque<std::vector<std::uint8_t>> queue_;
+    std::size_t queuedBytes_ = 0;
+    bool eof_ = false;
+    std::thread thread_;
+};
 
 struct Host
 {
@@ -102,6 +201,70 @@ struct Host
             return "no plugin loaded";
         plugin->setStateInformation(bytes.data(), static_cast<int>(bytes.size()));
         return {};
+    }
+
+    // Delivers a sample set (docs/SAMPLE_INTERFACE.md, "Delivery" and "The answer") and
+    // returns what StateResult carries: empty when the plugin loaded the set, otherwise the
+    // plugin's own refusal reason, or kPluginDidNotTake when it did not answer for this set.
+    std::string setSamples(const std::vector<std::uint8_t>& blob)
+    {
+        if (plugin == nullptr)
+            return "no plugin loaded";
+
+        std::vector<std::uint8_t> stateBack; // the plugin's state after the delivery
+        bool haveState = false;
+
+        // VST3: JUCE's host drops raw bytes given to setStateInformation, so the blob goes in
+        // as the component state of a preset container, and the state comes back the same way.
+        Vst3Visitor visitor([&](const juce::ExtensionsVisitor::VST3Client& client)
+        {
+            const juce::MemoryBlock before = client.getPreset();
+            phylo::host::Vst3Preset preset;
+            if (!phylo::host::parseVst3Preset(static_cast<const std::uint8_t*>(before.getData()), before.getSize(),
+                                              preset).ok())
+                return;
+
+            {
+                std::vector<std::uint8_t> container;
+                if (!phylo::host::buildVst3Preset(preset.classId, blob.data(), blob.size(), container).ok())
+                    return;
+                const juce::MemoryBlock block(container.data(), container.size());
+                container = {}; // release before the plugin decodes the set
+                if (!client.setPreset(block))
+                    return;
+            }
+
+            const juce::MemoryBlock after = client.getPreset();
+            std::string classId;
+            haveState = phylo::host::readVst3Chunk(static_cast<const std::uint8_t*>(after.getData()), after.getSize(),
+                                                   "Comp", classId, stateBack).ok();
+        });
+        plugin->getExtensions(visitor);
+
+        if (!visitor.visited)
+        {
+            // Other formats: raw bytes, as for any plugin state.
+            plugin->setStateInformation(blob.data(), static_cast<int>(blob.size()));
+            juce::MemoryBlock after;
+            plugin->getStateInformation(after);
+            const auto* p = static_cast<const std::uint8_t*>(after.getData());
+            stateBack.assign(p, p + after.getSize());
+            haveState = true;
+        }
+
+        if (!haveState)
+            return kPluginDidNotTake;
+
+        // The plugin writes three attributes about the last sample set it received. They count
+        // only when they describe the blob just sent.
+        const auto xml = juce::AudioProcessor::getXmlFromBinary(stateBack.data(), static_cast<int>(stateBack.size()));
+        if (xml == nullptr)
+            return kPluginDidNotTake;
+        if (xml->getStringAttribute("sampleSetBytes") != juce::String(static_cast<juce::int64>(blob.size())) ||
+            xml->getStringAttribute("sampleSetHash") != juce::String(phylo::host::fnv1a64Hex(blob.data(), blob.size())))
+            return kPluginDidNotTake;
+
+        return xml->getStringAttribute("sampleSetResult").toStdString();
     }
 
     void process(const phylo::host::ProcessRequest& req)
@@ -168,21 +331,23 @@ int runHost()
 
     Host host;
     phylo::host::FrameDecoder decoder;
-    std::uint8_t chunk[4096];
+    StdinReader input;
+    std::vector<std::uint8_t> incoming;
 
     for (;;)
     {
-        // read() returns what is available now. fread() would wait for a full buffer,
-        // which a live pipe may never deliver.
-#if defined(_WIN32)
-        const int n = _read(_fileno(stdin), chunk, static_cast<unsigned int>(sizeof chunk));
-#else
-        const ssize_t n = read(STDIN_FILENO, chunk, sizeof chunk);
-#endif
-        if (n <= 0)
+        incoming.clear();
+        if (!input.poll(incoming, 5))
             return 0; // app closed the pipe
 
-        decoder.feed(chunk, static_cast<std::size_t>(n));
+        if (incoming.empty())
+        {
+            // Nothing to do: let the plugin's timers and async updates run for a moment.
+            juce::MessageManager::getInstance()->runDispatchLoopUntil(1);
+            continue;
+        }
+
+        decoder.feed(incoming.data(), incoming.size());
 
         phylo::host::Frame frame;
         while (decoder.next(frame))
@@ -219,10 +384,21 @@ int runHost()
             {
                 // A sample blob is checked before the plugin sees it, and a bad one is refused
                 // with its reason even when no plugin is loaded (docs/SAMPLE_INTERFACE.md,
-                // "Found while building"). Other bytes are plugin state and pass through.
-                std::string refusal = phylo::samples::sampleBlobRefusal(frame.payload.data(), frame.payload.size());
-                if (refusal.empty())
+                // "Delivery"). A good one is delivered and the plugin's answer comes back:
+                // empty means the plugin loaded it. Other bytes are plugin state and pass
+                // through as before.
+                std::string refusal;
+                if (phylo::samples::looksLikeSampleBlob(frame.payload.data(), frame.payload.size()))
+                {
+                    if (!skipBlobCheck())
+                        refusal = phylo::samples::sampleBlobRefusal(frame.payload.data(), frame.payload.size());
+                    if (refusal.empty())
+                        refusal = host.setSamples(frame.payload);
+                }
+                else
+                {
                     refusal = host.setState(frame.payload);
+                }
                 writeFrame(phylo::host::MsgType::StateResult, phylo::host::encodeText(refusal));
                 break;
             }
