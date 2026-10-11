@@ -9,7 +9,7 @@ This is the current handoff. It supersedes the "Next" list in `CONTINUATION.md`,
 ## 1. Where things stand
 
 - **All pull requests are merged**, #1 to #25. The only open change is the docs branch that adds this file and refreshes `CONTINUATION.md` (see section 9).
-- **Last merged:** #25, the sample interface proposal (`docs/SAMPLE_INTERFACE.md`, docs only).
+- **Last merged:** #25, the sample interface proposal (`docs/SAMPLE_INTERFACE.md`, docs only). Open: #27 (sample library, `feat/sample-library`) and, built on top of it, the Phylotone side of sample delivery (`feat/sample-delivery`, see 8.7).
 - **Milestones:** M0, M1, M2 and M3 are in the code. M4 is partly built. M5 has a core slice. M6, M7 and M8 are not started.
 - **Nothing has been heard.** No audio device, MIDI device, or network was available to the session that built this. Every audible check is still open.
 
@@ -110,7 +110,7 @@ CI: `.github/workflows/ci.yml` on Ubuntu, macOS and Windows. Builds core and app
 
 ## 7. Akazi XL (separate repo)
 
-- The plugin is the first instrument target. Its sampler outputs silence until a sample is in its state. Loading a sample is done through state, with `sourcePath` pointing at a WAV in the scratch test. The protocol has no sample message yet.
+- The plugin is the first instrument target. Its sampler outputs silence until it has a sample. Two ways: a file (state with `sourcePath`), or a sample set that Phylotone sends (`docs/SAMPLE_INTERFACE.md` v1.0; the slot mapping is in Akazi XL's `docs/SAMPLE_SLOTS.md`). The host delivers a set to a VST3 plugin as its component state and reads the plugin's answer back.
 - Its `CLAUDE.md` sets the rules, which apply to any work there:
   - **Clean-room (hard):** never read, fetch or paste code from Akaizer (Ben Burchett), OpenKaizer, Akai firmware, or any other implementation of the Akai timestretch. Work from `docs/ALGORITHM.md` and the maths.
   - **Trademarks:** "Akai" and the S-series model names may appear only in the README heritage and credits section. Never in product names, plugin IDs, UI text or marks.
@@ -126,17 +126,18 @@ CI: `.github/workflows/ci.yml` on Ubuntu, macOS and Windows. Builds core and app
 Spec: `docs/SAMPLE_INTERFACE.md`, merged in #25. Branch from `kickoff/contract`.
 
 **Status:** built on `feat/sample-library`, with headless checks for the codec, the import, the
-library and the send path. The audible check is open. `docs/SAMPLE_INTERFACE.md` is now v0.2: read
-"Found while building" before starting 8.7. Details are in the session log in `CONTINUATION.md`.
+library and the send path. The audible check is open. `docs/SAMPLE_INTERFACE.md` is now v1.0, agreed
+on both sides: delivery to a VST3 plugin and the plugin's answer are specified and built (see 8.7).
+Details are in the session log in `CONTINUATION.md`.
 
 1. **Library folder and index.** `Documents/Phylotone/samples/`, one file per sample, plus an index so a sample keeps its name and slot across restarts. Slots 0 to 127.
 2. **Import.** Accept WAV at 16, 24 or 32-bit float, mono or stereo. Convert to 48 kHz, 32-bit float. Refuse anything longer than 60 s in the app, before it is sent.
 3. **Slot assignment.** Phylotone decides the slot number. Expose a way to assign or clear a slot in the UI or scene.
 4. **Slot blob.** Encode the full slot set as one `akazi.samples.v1` state blob (format in the doc). Core encoder and decoder, with tests for every field and for each refusal case in the doc.
-5. **Send.** Send the blob through the existing SetState path on host start and on every slot change. Check the StateResult text: empty means accepted, otherwise show the reason on the status line.
+5. **Send.** Send the blob through the existing SetState path on host start and on every slot change. Check the StateResult text: **empty means the plugin loaded the set** (it used to mean only that the host accepted the blob), otherwise show the reason on the status line. A plugin without sample-set support (an older Akazi XL) is answered `the plugin did not take the sample set`.
 6. **Stopgap.** The current `state=` file in `playback.txt` stays, labelled as a stopgap.
 
-**Accept:** drop a WAV in; it appears in the library; assign it to slot 0; Plugin audio on; the blob reaches the host and the StateResult is empty. Then a deliberately bad blob (wrong header, 61 s file, slot 128) is refused with the reason shown, and the previous slots keep playing. Headless check for the blob codec and the refusal cases. The audible part needs a person.
+**Accept:** drop a WAV in; it appears in the library; assign it to slot 0; Plugin audio on; the blob reaches the plugin and the StateResult is empty (the plugin loaded it). Then a deliberately bad blob (wrong header, 61 s file, slot 128) is refused with the reason shown, and the previous slots keep playing. Headless check for the blob codec and the refusal cases. The audible part needs a person.
 
 **Decided (Thomas, 2026-10-11, "yes to all three"):**
 - Root note per slot: one byte, default middle C.
@@ -151,6 +152,7 @@ library and the send path. The audible check is open. `docs/SAMPLE_INTERFACE.md`
 ### 8.3 M4 sound check (needs a person with audio out)
 
 - Plugin audio on, Play. Expect sound from the Akazi XL state file.
+- With a sample set (8.1): drop a WAV in, assign it to slot 0, Plugin audio on, Play. **The sample itself should sound** on the notes of the pattern, not silence. The status line reads `samples accepted`. Pitch: the sample plays at its own pitch on its root note (60 unless set). With two slots assigned, a Program Change 1 in the pattern's MIDI (or the Sample Slot knob in the plugin) switches to the other sample. A bad blob (the test hook) is refused with the reason and the previous sample keeps sounding.
 - Kill the host during playback. The app must keep running and restart the host.
 - Check the Release build of the host.
 
@@ -170,7 +172,9 @@ Per the milestones. Sections played (M6), streaming (M7), and the completion bar
 
 ### 8.7 Akazi XL change list (approved by Thomas 2026-10-11; separate repo)
 
-Read the `akazi.samples.v1` blob in SetState, map slots to the sampler, answer StateResult (empty on success, reason on refusal), and document the slot-to-sampler mapping. Thomas gave the go-ahead on 2026-10-11, including a fix for the delivery path (JUCE's VST3 host drops state that is not its own XML). Work on a branch in the Akazi XL repo with a pull request; Thomas merges.
+Read the `akazi.samples.v1` blob in SetState, map slots to the sampler, record the answer, and document the slot-to-sampler mapping (Akazi XL's `docs/SAMPLE_SLOTS.md`). Thomas gave the go-ahead on 2026-10-11, including a fix for the delivery path (JUCE's VST3 host drops state that is not its own XML). Work on a branch in the Akazi XL repo with a pull request; Thomas merges.
+
+**Status:** the interface is agreed as `docs/SAMPLE_INTERFACE.md` v1.0 (delivery as VST3 component state; the plugin answers in three attributes of its state XML). The Phylotone side is built on `feat/sample-delivery` (cut from `feat/sample-library`, PR #27): preset container and FNV-1a in the core, the host's delivery and readback, an audio thread in the host, and an end-to-end check that runs only when `-DPHYLO_AKAZI_VST3=<bundle>` is given. The Akazi XL side is a separate branch in that repo. The end-to-end result against a real build is in the session log in `CONTINUATION.md`. Not yet done: the audible check by a person, and the app-side wording on a plugin that did not take a set beyond the status line.
 
 ## 9. Open decisions and known gaps
 
@@ -180,7 +184,7 @@ Read the `akazi.samples.v1` blob in SetState, map slots to the sampler, answer S
 - **Assistant:** the scene file is written per change. Approve and reject are sent to the model as notes. Not yet confirmed with a live model.
 - **Naming:** "Phylotone" is a placeholder. A naming session is planned.
 - **Audio thread:** the device callback is lock-free now, but the leftovers in 8.4 remain.
-- **Plugin state:** a state file must contain a sample for Akazi XL to sound. There is no in-app way to make one yet, which is the reason for 8.1.
+- **Plugin state:** Akazi XL sounds when it has a sample: a file in its state, or a sample set from Phylotone (8.1, 8.7).
 
 ## 10. Environment limits (for whoever picks this up)
 
@@ -195,5 +199,5 @@ Read the `akazi.samples.v1` blob in SetState, map slots to the sampler, answer S
 - `docs/CONTRACT.md`: the completion contract (reference).
 - `docs/MILESTONES.md`: the milestone path and accept checks.
 - `docs/ASSISTANT.md`: the assistant spec. Part of the product, not an add-on.
-- `docs/SAMPLE_INTERFACE.md`: the sample interface proposal (v0.1, merged in #25; Akazi XL side not yet agreed).
+- `docs/SAMPLE_INTERFACE.md`: the sample interface, v1.0 (agreed on both sides; byte layout, delivery, the answer).
 - `CONTINUATION.md`: session log and PR history. Its "Next" list is superseded by section 8 here.

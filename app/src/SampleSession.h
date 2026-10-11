@@ -20,6 +20,13 @@
 // the host starts is left good, so there are accepted slots to keep playing.
 constexpr char kSampleFaultEnv[] = "PHYLO_SAMPLE_FAULT";
 
+// Its host-side partner: phylo-plughost reads PHYLO_HOST_SKIP_BLOB_CHECK. When it is "1" the
+// host skips its own check of a sample blob, so a damaged blob (made with the hook above, or
+// by a test) reaches the plugin and the plugin's own refusal comes back instead of the
+// host's. Set it in the environment the host is started from. For tests only; normally the
+// host refuses a bad blob itself and the plugin never sees it (docs/SAMPLE_INTERFACE.md,
+// "The answer").
+
 // True for a word the hook recognises (header, rate, slot, length, truncated). Any other
 // word is ignored by buildBlob.
 bool isKnownSampleFaultWord(const char* word);

@@ -1,6 +1,6 @@
 # Phylotone: continuation brief
 
-*For any session picking up this project. Last updated 2026-10-10.*
+*For any session picking up this project. Last updated 2026-10-11.*
 
 **Start with `docs/HANDOFF.md`.** It is the current status and the ordered next work. The "Next" list below is kept for the log, but `docs/HANDOFF.md` section 8 is the plan.
 
@@ -267,3 +267,45 @@ Decided (Thomas, 2026-10-11): root note per slot, one byte, default middle C; 60
   own refusal, and the delivery path is fixed and agreed on both sides. That work is on its own
   branches and pull requests. PR #27 is not merged; merging needs Thomas's "Merge". The audible check
   is planned for 2026-10-12.
+- 2026-10-11: Sample delivery, Phylotone side, on `feat/sample-delivery` (cut from `feat/sample-library`, PR
+  #27; not pushed, no PR). Built from the agreed design (Akazi XL side is a separate repo and branch).
+  `docs/SAMPLE_INTERFACE.md` is now v1.0, agreed on both sides.
+  **Contract change, and why: an empty StateResult for a sample set used to mean "the host accepted the
+  blob"; it now means "the plugin loaded it".** Two things forced this. (1) A raw blob never reached a
+  VST3 plugin: JUCE's VST3 host drops bytes that are not its own XML wrapper in `setStateInformation`.
+  The host now gives the blob to the plugin as the VST3 component state, through a preset container
+  (`ExtensionsVisitor::VST3Client::getPreset/setPreset`). (2) `setStateInformation` returns nothing, so
+  the plugin could not refuse. The plugin now records `sampleSetBytes`, `sampleSetHash` (FNV-1a 64) and
+  `sampleSetResult` in its state XML, and the host reads them back and answers StateResult from them. A
+  plugin that did not record this exact blob (an older Akazi XL, any other plugin) is answered `the plugin
+  did not take the sample set`. Because the host can now ask the plugin, an empty answer could be made
+  honest. `docs/CONTRACT.md` is not changed.
+  Built: `phylo/host/Vst3Preset.h` (hostile-input container reader and builder, JUCE-free) and
+  `phylo/host/Fnv1a.h` in the core; `phylo-plughost` delivery and readback (VST3 via the client
+  extension, other formats raw); host test hook `PHYLO_HOST_SKIP_BLOB_CHECK=1` (a bad blob reaches the
+  plugin so the plugin's own refusal can be seen; documented next to `PHYLO_SAMPLE_FAULT` in
+  `app/src/SampleSession.h` and in `docs/SAMPLE_INTERFACE.md`; it is read by the host, so set it where the
+  host starts); `FakeSampleHost` now documents
+  that its empty answer means "loaded"; `phylo_sample_send` gained the hook check and a plain-state check
+  against the real host with no plugin.
+  Found against the real plugin, not in the design: the host ran Process on the same thread that reads
+  input and (needed for the plugin's timers) runs the message loop. A Program Change makes Akazi XL build
+  the new slot's sample from a message-thread timer; with a 60 s sample that took about 0.8 s, the host did
+  not read the next Process meanwhile, the supervisor's 250 ms reply timeout killed and restarted the host,
+  and the slot switch was lost. Without the message loop pumped at all, Program Change never took effect
+  (seen: 41 polls, 1.3 s, no switch). The host now has three threads: a reader that splits frames (Process
+  goes straight to the audio queue), the main thread (message loop, state calls), and an audio thread.
+  The supervisor's timeouts are unchanged.
+  Tests: core `phylo_host_delivery` (16 tests: FNV vectors, container round trip and exact layout, an
+  SDK-style container, every truncation, header, list-offset, count and chunk-range faults including
+  64-bit wrap cases, every single-byte change, random bytes, a 64 MiB chunk) and the existing suites,
+  all passing, also under ASan and UBSan (core only, separate build). ctest has 14 entries (13 before plus
+  `phylo_host_delivery`); with `-DPHYLO_AKAZI_VST3=<bundle>` it adds `phylo_akazi_e2e` (and
+  `phylo_akazi_e2e_budget` with `-DPHYLO_AKAZI_BUDGET=ON`; `-DPHYLO_AKAZI_VST3_OLD=<bundle>` adds
+  `phylo_akazi_e2e_old` for a build without sample-set support). CI has no plugin, so none is registered
+  there. The end-to-end result against the real plugin is in the report for this change; see the section
+  below.
+  Not verified: anything audible through a device (the check listens to the host's rendered audio, not to
+  a speaker); Windows and Linux builds of the new host code (CI only); a plugin other than Akazi XL; the
+  non-VST3 raw path (no such plugin here); the app UI wording beyond the existing status line
+  (`samples refused: <reason>` shows the new refusal as is).
