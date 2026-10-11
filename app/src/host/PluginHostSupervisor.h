@@ -41,6 +41,20 @@ public:
     // a broken or silent host is marked failed.
     bool setState(const std::vector<std::uint8_t>& bytes);
 
+    // Sends an `akazi.samples.v1` blob (phylo/samples/SampleBlob.h), the full slot set. Kept
+    // apart from setState: the two are stored separately and both are sent again after every
+    // host start, the plugin state first, then the samples.
+    //
+    // Returns true when the host answered with an empty StateResult. On a refusal the reason
+    // is in lastSamplesError(), the host stays up, and the set that was accepted before stays
+    // the one in force: it is what gets sent again after a restart. When the host is not
+    // available the blob is kept and sent on the next start; the call returns false with the
+    // reason in lastSamplesError().
+    bool setSamples(const std::vector<std::uint8_t>& blob);
+
+    // Why the last setSamples (or the re-send after a start) failed. Empty when it was accepted.
+    const std::string& lastSamplesError() const noexcept { return samplesError_; }
+
     State state() const noexcept { return state_; }
     const std::string& lastError() const noexcept { return error_; }
 
@@ -67,4 +81,12 @@ private:
     std::chrono::steady_clock::time_point retryAt_{};
     std::vector<std::uint8_t> restoredState_; // sent on every host start
     bool stateAccepted_ = true;               // the last state the host answered
+
+    // Samples. `wantedSamples_` is the latest set asked for; `acceptedSamples_` is the last
+    // one the host accepted. A refusal drops the wanted set back to the accepted one.
+    std::vector<std::uint8_t> wantedSamples_;
+    std::vector<std::uint8_t> acceptedSamples_;
+    bool haveWantedSamples_ = false;   // an empty blob is never valid, but "nothing asked" is
+    bool haveAcceptedSamples_ = false;
+    std::string samplesError_;
 };

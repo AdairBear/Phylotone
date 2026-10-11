@@ -54,6 +54,17 @@ public:
     // What the last restore did, for the status line. Empty until a restore has been asked for.
     std::string stateStatus() const;
 
+    // Caller side only (the message thread, never the audio thread). An `akazi.samples.v1`
+    // blob to send on the worker before the next render. Only the newest blob is kept: one
+    // that the worker has not picked up yet is replaced.
+    void sendSamples(std::vector<std::uint8_t> blob);
+    // What the last sendSamples did, for the status line: "samples queued", "samples
+    // accepted", or "samples refused: <reason>". Empty until samples have been sent.
+    std::string samplesStatus() const;
+    // Counts sendSamples calls the worker has finished with (accepted or not), so a caller
+    // can tell when the status belongs to the blob it sent.
+    std::size_t samplesAnswered() const;
+
     std::size_t droppedBlocks() const;
     std::size_t takenBlocks() const;
 
@@ -76,7 +87,10 @@ private:
     std::atomic<bool> stop_{false};
     std::atomic<bool> killRequested_{false};
     std::atomic<std::vector<std::uint8_t>*> pendingState_{nullptr}; // owned by whoever holds it
-    mutable std::mutex statusMutex_; // guards stateStatus_; never taken on the audio path
+    std::atomic<std::vector<std::uint8_t>*> pendingSamples_{nullptr}; // owned by whoever holds it
+    std::atomic<std::size_t> samplesAnswered_{0};
+    mutable std::mutex statusMutex_; // guards stateStatus_ and samplesStatus_; never taken on the audio path
     std::string stateStatus_;
+    std::string samplesStatus_;
     std::thread worker_;
 };

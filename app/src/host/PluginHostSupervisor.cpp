@@ -164,6 +164,15 @@ bool PluginHostSupervisor::setState(const std::vector<std::uint8_t>& bytes)
     return stateAccepted_;
 }
 
+bool PluginHostSupervisor::setSamples(const std::vector<std::uint8_t>& blob)
+{
+    // Scaffolding: implemented in the host-path chunk.
+    wantedSamples_ = blob;
+    haveWantedSamples_ = true;
+    samplesError_ = "samples are not sent yet";
+    return false;
+}
+
 bool PluginHostSupervisor::sendState(const std::vector<std::uint8_t>& bytes)
 {
     const auto request = phylo::host::encodeFrame(MsgType::SetState, bytes);

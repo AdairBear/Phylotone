@@ -42,6 +42,8 @@ target_sources(PhylotoneApp PRIVATE
     src/AssistantPanel.cpp
     src/AudioOutput.cpp
     src/PlaybackSettings.cpp
+    src/SampleSession.cpp
+    src/SampleLibraryPanel.cpp
     src/host/AudioFeed.cpp
     src/host/OfflineTake.cpp
     src/host/PipelinedRenderer.cpp
@@ -133,6 +135,36 @@ add_executable(phylo_playback_settings_check
     src/PlaybackSettings.cpp
 )
 add_test(NAME phylo_playback_settings COMMAND phylo_playback_settings_check)
+
+# Headless check of the sample session (docs/HANDOFF.md 8.1): import a WAV, see it in the
+# library, assign a slot, build the blob, and the refusal hook. Plain C++, no JUCE.
+add_executable(phylo_sample_session_check
+    src/SampleSessionCheck.cpp
+    src/SampleSession.cpp
+)
+target_include_directories(phylo_sample_session_check PRIVATE src)
+target_link_libraries(phylo_sample_session_check PRIVATE phylo_core)
+add_test(NAME phylo_sample_session COMMAND phylo_sample_session_check)
+
+# A stand-in for the plugin host that answers sample blobs the way the interface says the
+# plugin side must (docs/SAMPLE_INTERFACE.md). Plain C++, no JUCE. Used by the send check.
+add_executable(phylo_fake_samplehost src/host/FakeSampleHost.cpp)
+target_link_libraries(phylo_fake_samplehost PRIVATE phylo_core)
+
+# Headless check of the sample send path: a good blob is accepted, a bad one is refused
+# with its reason and the previous slots stay, and the accepted set is sent again after a
+# host restart. Runs against the stand-in host and the real one. Plain C++, no JUCE.
+add_executable(phylo_sample_send_check
+    src/host/SampleSendCheck.cpp
+    src/host/PipelinedRenderer.cpp
+    src/host/PluginHostSupervisor.cpp
+    src/host/ProcessPipe.cpp
+)
+target_include_directories(phylo_sample_send_check PRIVATE src/host)
+target_link_libraries(phylo_sample_send_check PRIVATE phylo_core Threads::Threads)
+add_dependencies(phylo_sample_send_check phylo_fake_samplehost phylo-plughost)
+add_test(NAME phylo_sample_send
+    COMMAND phylo_sample_send_check $<TARGET_FILE:phylo_fake_samplehost> $<TARGET_FILE:phylo-plughost>)
 
 # Headless check of the assistant settings file format (no JUCE).
 add_executable(phylo_app_checks

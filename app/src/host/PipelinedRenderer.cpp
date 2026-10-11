@@ -37,6 +37,25 @@ std::string PipelinedRenderer::stateStatus() const
     return stateStatus_;
 }
 
+void PipelinedRenderer::sendSamples(std::vector<std::uint8_t> blob)
+{
+    // Scaffolding: implemented in the host-path chunk.
+    (void) blob;
+    std::lock_guard<std::mutex> lock(statusMutex_);
+    samplesStatus_ = "samples queued";
+}
+
+std::string PipelinedRenderer::samplesStatus() const
+{
+    std::lock_guard<std::mutex> lock(statusMutex_);
+    return samplesStatus_;
+}
+
+std::size_t PipelinedRenderer::samplesAnswered() const
+{
+    return samplesAnswered_.load(std::memory_order_acquire);
+}
+
 bool PipelinedRenderer::submit(phylo::host::ProcessRequest block)
 {
     const std::size_t tail = requestTail_.load(std::memory_order_relaxed);

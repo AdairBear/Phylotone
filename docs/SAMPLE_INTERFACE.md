@@ -1,7 +1,8 @@
 # Phylotone to Akazi XL: sample interface
 
-*Draft v0.1, proposal. Akazi XL's side is not agreed yet. Nothing here changes the
-host protocol until both sides sign it off.*
+*Draft v0.2, proposal. Akazi XL's side is not agreed yet. v0.2 adds the byte layout that
+Phylotone's side now implements (see "Byte layout"), and the points found while building
+it (see "Found while building"). v0.1 was the first proposal, merged in #25.*
 
 ## Purpose
 
@@ -48,6 +49,46 @@ Phylotone may send the blob again at any time (tempo changes do not need it). Ak
 answers with a StateResult. An empty text answer means the blob was accepted. A text
 answer is the refusal reason, for the status line.
 
+### Byte layout
+
+All integers are little-endian. Floats are IEEE 754 bit patterns. The reference is
+`core/include/phylo/samples/SampleBlob.h`; the encoder, the decoder and their tests are in
+`phylo_core`.
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 16 | Header: the ASCII bytes `akazi.samples.v1`, no terminator |
+| 16 | 4 | u32 sample rate in Hz. Always 48000 |
+| 20 | 4 | u32 slot count N, 0 to 128 |
+| 24 | | N slot records, in strictly ascending slot order |
+
+One slot record:
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 1 | u8 slot number, 0 to 127 |
+| 1 | 1 | u8 root note, 0 to 127. 60 (middle C) when not set. See open question 1 |
+| 2 | 1 | u8 channel count C, 1 or 2 |
+| 3 | 1 | u8 name length L in bytes, 0 to 64 |
+| 4 | 4 | u32 frame count F, 1 to 2 880 000 (60 s) |
+| 8 | L | Name, UTF-8, no terminator |
+| 8 + L | 4·F·C | float32 samples, interleaved |
+
+The blob ends with the last record. A blob with N = 0 is valid and clears every slot.
+
+A receiver checks in this order and refuses with the first problem: header, sample rate,
+slot count, then for each slot: slot range, slot order, root note, channel count, name
+length, frame count (zero, then over the limit), truncation, name is UTF-8, samples are
+finite. Last: bytes after the final record.
+
+### Size
+
+Version 1 sends the set as one SetState frame, so the whole blob must fit in one wire
+payload. That limit was 16 MiB, which is less than one 60 s stereo sample (about 23 MB).
+It is now 64 MiB (`kMaxPayloadBytes`). Phylotone refuses to build a larger set and says so
+on the status line. 64 MiB is about 5 min 49 s of mono, or 2 min 54 s of stereo, across
+all slots. See open question 2.
+
 Version 2, if needed, would add a per-slot message so a single change does not resend
 the whole set. Not part of v1.
 
@@ -56,7 +97,8 @@ the whole set. Not part of v1.
 - **Accept a slot set.** Replace all slots with the ones in the blob.
 - **Refuse a slot set.** Return a reason and keep the current slots. Refusals: unknown
   format header, a sample over the length limit, a slot number out of range, a sample
-  rate other than 48 kHz, a truncated blob.
+  rate other than 48 kHz, a truncated blob. The byte layout adds the rest of the checks
+  (see "Byte layout").
 - **Keep the sample when the host restarts.** Phylotone sends the blob again after a
   host restart, so Akazi XL does not need to store anything on disk.
 
@@ -82,11 +124,34 @@ the whole set. Not part of v1.
 - Answer StateResult with an empty text on success, or the refusal reason.
 - Document the slot-to-sampler mapping in Akazi XL's own docs.
 
+## Found while building (Phylotone side, v0.2)
+
+These came up in the build. None is settled.
+
+1. **A raw blob does not reach a VST3 plugin through JUCE's host.** `phylo-plughost` calls
+   the hosted plugin's `setStateInformation`. For VST3, JUCE's host side only accepts its
+   own XML wrapper there and drops any other bytes without an error. So the raw blob never
+   arrives at Akazi XL today, and the plugin cannot answer through that call either: it
+   returns nothing. The stopgap `state=` file works because it holds bytes the plugin made
+   through the same wrapper.
+2. **So the host answers StateResult for a sample blob, not the plugin.** `phylo-plughost`
+   recognises bytes that start with `akazi.samples.`, checks them with the same decoder,
+   and answers the refusal reason itself. A refused blob is not passed to the plugin, so
+   the plugin keeps what it had. A valid blob is passed on as before.
+3. **Still to agree with Akazi XL:** how a valid blob is delivered to the plugin (for
+   example, the host wraps it as the VST3 component state so it arrives in the plugin's
+   `setStateInformation`), and how the plugin reports a refusal of its own (for example
+   out of memory). Until then an empty StateResult means "the host accepted the blob",
+   not "Akazi XL loaded it".
+4. **The two state paths are kept apart.** The stopgap `state=` bytes and the sample blob
+   are stored and re-sent separately after a host restart, the plugin state first.
+
 ## Open questions
 
 1. Should a slot carry a root note, so the sample plays at the right pitch without the
    user setting it? Proposed: yes, optional, default middle C.
 2. Is 60 seconds enough for drum and loop sampling? Needs a check on Akazi XL's memory
-   budget.
+   budget. The same check should set the budget for the whole set (64 MiB in v0.2, see
+   "Size").
 3. Should Akazi XL report the slots it has loaded in StateResult, so Phylotone can show
    them? Proposed: not in v1; v2 with the per-slot message.
