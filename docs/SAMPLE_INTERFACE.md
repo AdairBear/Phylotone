@@ -76,8 +76,12 @@ One slot record:
 
 The blob ends with the last record. A blob with N = 0 is valid and clears every slot.
 
-A receiver checks in this order and refuses with the first problem: header, sample rate,
-slot count, then for each slot: slot range, slot order, root note, channel count, name
+Samples are any finite float. Values above 1.0 are allowed: a float source can hold them,
+and conversion to 48 kHz can overshoot a full-scale source by a few tenths. Phylotone does
+not clip. NaN and infinity are refused.
+
+A receiver checks in this order and refuses with the first problem: header, total size
+(see "Size"), sample rate, slot count, then for each slot: slot range, slot order, root note, channel count, name
 length, frame count (zero, then over the limit), truncation, name is UTF-8, samples are
 finite. Last: bytes after the final record.
 
