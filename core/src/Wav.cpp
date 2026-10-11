@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 
@@ -71,7 +72,8 @@ bool writeWavFloat(const std::string& path, const std::vector<float>& interleave
         put32(b, bits);
     }
 
-    std::ofstream out(path, std::ios::binary);
+    // u8path: the path is UTF-8, which a plain fstream does not honour on Windows.
+    std::ofstream out(std::filesystem::u8path(path), std::ios::binary);
     if (!out)
         return false;
     out.write(reinterpret_cast<const char*>(b.data()), static_cast<std::streamsize>(b.size()));
@@ -80,7 +82,7 @@ bool writeWavFloat(const std::string& path, const std::vector<float>& interleave
 
 bool readWavFloat(const std::string& path, std::vector<float>& interleaved, int& channels, int& sampleRate)
 {
-    std::ifstream in(path, std::ios::binary);
+    std::ifstream in(std::filesystem::u8path(path), std::ios::binary);
     if (!in)
         return false;
     const std::vector<std::uint8_t> b((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
