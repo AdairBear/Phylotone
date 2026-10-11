@@ -1,0 +1,21 @@
+tests/core/test_sample_library.cpp
+  s_8da52acdd1337e::t_f4739bbc837935 1-3,6-884
+core/src/samples/SampleLibrary.cpp
+  s_8da52acdd1337e::t_c36808c7bd8468 3-756
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "de3beec4b7d3f120fdcd9b9af1b8f065701fac6e",
+  "prompts": {},
+  "sessions": {
+    "s_8da52acdd1337e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aeaaba4f-8f90-45a0-8b53-f782f2cf3037",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Thomas Adair <34932535+AdairBear@users.noreply.github.com>"
+    }
+  }
+}
