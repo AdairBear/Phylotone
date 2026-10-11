@@ -15,6 +15,9 @@ add_library(phylo_core STATIC
     core/src/Wire.cpp
     core/src/Mixer.cpp
     core/src/Wav.cpp
+    core/src/samples/SampleBlob.cpp
+    core/src/samples/SampleImport.cpp
+    core/src/samples/SampleLibrary.cpp
 )
 target_include_directories(phylo_core PUBLIC core/include)
 target_compile_options(phylo_core PRIVATE
@@ -38,6 +41,18 @@ if(PHYLO_BUILD_TESTS)
         $<$<CXX_COMPILER_ID:MSVC>:/W4>
     )
     add_test(NAME phylo_core COMMAND phylo_core_tests)
+
+    # Sample library (docs/SAMPLE_INTERFACE.md): the blob codec, WAV import and the library
+    # folder. One program each, sharing the runner in tests/core/check.h.
+    foreach(suite sample_blob sample_import sample_library)
+        add_executable(phylo_${suite}_tests tests/core/test_${suite}.cpp)
+        target_link_libraries(phylo_${suite}_tests PRIVATE phylo_core)
+        target_compile_options(phylo_${suite}_tests PRIVATE
+            $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-Wall -Wextra -Wpedantic>
+            $<$<CXX_COMPILER_ID:MSVC>:/W4>
+        )
+        add_test(NAME phylo_${suite} COMMAND phylo_${suite}_tests)
+    endforeach()
 endif()
 
 option(PHYLO_BUILD_PROVIDERS "Build the assistant chat-provider adapters (fetches nlohmann/json)" OFF)
