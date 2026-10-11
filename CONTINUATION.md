@@ -303,8 +303,15 @@ Decided (Thomas, 2026-10-11): root note per slot, one byte, default middle C; 60
   `phylo_host_delivery`); with `-DPHYLO_AKAZI_VST3=<bundle>` it adds `phylo_akazi_e2e` (and
   `phylo_akazi_e2e_budget` with `-DPHYLO_AKAZI_BUDGET=ON`; `-DPHYLO_AKAZI_VST3_OLD=<bundle>` adds
   `phylo_akazi_e2e_old` for a build without sample-set support). CI has no plugin, so none is registered
-  there. The end-to-end result against the real plugin is in the report for this change; see the section
-  below.
+  there.
+  End-to-end result (macOS arm64, Release, plugin built from Akazi XL `sample-slots`, 2026-10-11): `sound`
+  mode 82 checks, 0 failed: silent before a set, empty answer then the sample at its pitch (about 438 Hz
+  for a 440 Hz sine at root 60), Program Change 1 took effect after 41 to 69 ms of wall time, host
+  refusal (slot 128) leaves the sample playing, the plugin's own five refusal reasons come back with
+  `PHYLO_HOST_SKIP_BLOB_CHECK=1` and the sample keeps playing, a set with no slots silences it, plain XML
+  state round-trips and a set after it is answered. Full budget (62 784 122 bytes, 59.9 MiB): delivered in
+  about 1.1 s, host peak memory about 535 MiB, switch to a 27 s slot about 0.4 s. The older Akazi XL build
+  gets `the plugin did not take the sample set` (`old` mode, 32 checks, 0 failed).
   Not verified: anything audible through a device (the check listens to the host's rendered audio, not to
   a speaker); Windows and Linux builds of the new host code (CI only); a plugin other than Akazi XL; the
   non-VST3 raw path (no such plugin here); the app UI wording beyond the existing status line
