@@ -138,10 +138,10 @@ library and the send path. The audible check is open. `docs/SAMPLE_INTERFACE.md`
 
 **Accept:** drop a WAV in; it appears in the library; assign it to slot 0; Plugin audio on; the blob reaches the host and the StateResult is empty. Then a deliberately bad blob (wrong header, 61 s file, slot 128) is refused with the reason shown, and the previous slots keep playing. Headless check for the blob codec and the refusal cases. The audible part needs a person.
 
-**Open decisions (need Thomas):**
-- Root note per slot. Proposed: optional, default middle C.
-- Memory budget for 60 s samples. Needs a check in Akazi XL.
-- Whether StateResult reports the loaded slots. Proposed: v2.
+**Decided (Thomas, 2026-10-11, "yes to all three"):**
+- Root note per slot: one byte, default middle C.
+- Budget: 60 s per sample and 64 MiB for the whole set.
+- StateResult does not report the loaded slots in v1. Deferred to v2.
 
 ### 8.2 Recording and drum programming (after 8.1)
 
@@ -168,9 +168,9 @@ Levels, pan, master bus, and record in the UI, on the same output path as M4.
 
 Per the milestones. Sections played (M6), streaming (M7), and the completion bars (M8, including the 4-hour soak).
 
-### 8.7 Akazi XL change list (needs approval; separate repo)
+### 8.7 Akazi XL change list (approved by Thomas 2026-10-11; separate repo)
 
-Read the `akazi.samples.v1` blob in SetState, map slots to the sampler, answer StateResult (empty on success, reason on refusal), and document the slot-to-sampler mapping. Do not start this without Thomas's go-ahead.
+Read the `akazi.samples.v1` blob in SetState, map slots to the sampler, answer StateResult (empty on success, reason on refusal), and document the slot-to-sampler mapping. Thomas gave the go-ahead on 2026-10-11, including a fix for the delivery path (JUCE's VST3 host drops state that is not its own XML). Work on a branch in the Akazi XL repo with a pull request; Thomas merges.
 
 ## 9. Open decisions and known gaps
 

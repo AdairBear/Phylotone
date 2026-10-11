@@ -1,6 +1,7 @@
 # Phylotone to Akazi XL: sample interface
 
-*Draft v0.2, proposal. Akazi XL's side is not agreed yet. v0.2 adds the byte layout that
+*Draft v0.2, proposal. Akazi XL's side is not agreed yet. The three open questions were
+decided on 2026-10-11 (see "Decisions"). v0.2 adds the byte layout that
 Phylotone's side now implements (see "Byte layout"), and the points found while building
 it (see "Found while building"). v0.1 was the first proposal, merged in #25.*
 
@@ -67,7 +68,7 @@ One slot record:
 | Offset | Size | Field |
 |---|---|---|
 | 0 | 1 | u8 slot number, 0 to 127 |
-| 1 | 1 | u8 root note, 0 to 127. 60 (middle C) when not set. See open question 1 |
+| 1 | 1 | u8 root note, 0 to 127. 60 (middle C) when not set. See decision 1 |
 | 2 | 1 | u8 channel count C, 1 or 2 |
 | 3 | 1 | u8 name length L in bytes, 0 to 64 |
 | 4 | 4 | u32 frame count F, 1 to 2 880 000 (60 s) |
@@ -91,7 +92,7 @@ Version 1 sends the set as one SetState frame, so the whole blob must fit in one
 payload. That limit was 16 MiB, which is less than one 60 s stereo sample (about 23 MB).
 It is now 64 MiB (`kMaxPayloadBytes`). Phylotone refuses to build a larger set and says so
 on the status line. 64 MiB is about 5 min 49 s of mono, or 2 min 54 s of stereo, across
-all slots. See open question 2.
+all slots. See decision 2.
 
 Version 2, if needed, would add a per-slot message so a single change does not resend
 the whole set. Not part of v1.
@@ -150,12 +151,14 @@ These came up in the build. None is settled.
 4. **The two state paths are kept apart.** The stopgap `state=` bytes and the sample blob
    are stored and re-sent separately after a host restart, the plugin state first.
 
-## Open questions
+## Decisions (Thomas, 2026-10-11)
 
-1. Should a slot carry a root note, so the sample plays at the right pitch without the
-   user setting it? Proposed: yes, optional, default middle C.
-2. Is 60 seconds enough for drum and loop sampling? Needs a check on Akazi XL's memory
-   budget. The same check should set the budget for the whole set (64 MiB in v0.2, see
-   "Size").
-3. Should Akazi XL report the slots it has loaded in StateResult, so Phylotone can show
-   them? Proposed: not in v1; v2 with the per-slot message.
+These were the open questions of v0.2. Thomas answered "yes to all three".
+
+1. **Root note per slot.** A slot carries a root note: one byte, default 60 (middle C).
+2. **Budget.** 60 seconds per sample, and 64 MiB for the whole set (see "Size").
+3. **Loaded slots in StateResult.** Not in v1. Deferred to v2, with the per-slot message.
+
+Still open: how a valid blob is delivered to the plugin and how the plugin reports its own
+refusal ("Found while building", point 3). Thomas approved the Akazi XL work for this on
+2026-10-11 (handoff 8.7). The design is agreed in that work, not here.

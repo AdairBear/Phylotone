@@ -84,10 +84,10 @@ are with Thomas.
 4. M4 audio-thread leftovers: `buildBlock` allocates a request each block; `AudioFeed::pull` grows its
    `ready_` deque; a replaced pattern's note storage is freed on the audio thread.
 5. M5 app side (levels, pan, master bus, record in the UI) on the same output.
-6. Akazi XL change list for the sample blob. Separate repo; needs Thomas's go-ahead before anyone touches it.
+6. Akazi XL change list for the sample blob. Separate repo. Thomas gave the go-ahead on 2026-10-11.
 
-Open decisions (Thomas): root note per slot (proposed: optional, default middle C); 60 s memory budget;
-whether StateResult reports loaded slots (proposed: v2).
+Decided (Thomas, 2026-10-11): root note per slot, one byte, default middle C; 60 s per sample and a
+64 MiB set; StateResult does not report loaded slots in v1 (v2).
 
 ## Working rules
 - New work goes on a branch with a pull request. Thomas reviews and merges.
@@ -257,3 +257,13 @@ whether StateResult reports loaded slots (proposed: v2).
   and a 64 MiB set (`kMaxBlobBytes`, tied to `kMaxPayloadBytes`); needs a check in Akazi XL. (3)
   StateResult reporting the loaded slots: not in v1, as proposed. (4) How a valid blob is delivered to
   the plugin, and how the plugin reports its own refusal (see "Found while building").
+- 2026-10-11: Thomas decided the three open questions of 8.1 ("yes to all three"). (1) Root note per
+  slot: one byte per slot, default 60 (middle C), `kDefaultRootNote`. (2) Budget: 60 s per sample
+  (`kMaxSampleSeconds`) and 64 MiB for the whole set (`kMaxBlobBytes`, tied to `kMaxPayloadBytes`).
+  (3) StateResult does not report the loaded slots in v1; deferred to v2 with the per-slot message.
+  No code or format change follows: these were already the built defaults. The comments in
+  `SampleBlob.h`, `docs/SAMPLE_INTERFACE.md` ("Decisions") and `docs/HANDOFF.md` now say decided.
+  Thomas also approved the Akazi XL change list (handoff 8.7): Akazi XL reads the blob and reports its
+  own refusal, and the delivery path is fixed and agreed on both sides. That work is on its own
+  branches and pull requests. PR #27 is not merged; merging needs Thomas's "Merge". The audible check
+  is planned for 2026-10-12.

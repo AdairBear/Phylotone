@@ -54,12 +54,12 @@ constexpr std::size_t kMaxNameBytes = 64;
 constexpr std::uint32_t kMaxSampleSeconds = 60;
 constexpr std::uint32_t kMaxSampleFrames = kMaxSampleSeconds * kSampleRateHz;
 
-// OPEN DECISION (Thomas): root note per slot. Proposed: optional, default middle C. The
-// blob always carries one byte for it; a slot whose root was never set carries this value.
+// Decided (Thomas, 2026-10-11): root note per slot, one byte, default middle C. The blob
+// always carries the byte; a slot whose root was never set carries this value.
 constexpr std::uint8_t kDefaultRootNote = 60;
 constexpr std::uint8_t kMaxRootNote = 127;
 
-// OPEN DECISION (Thomas, needs an Akazi XL memory check): the budget for the whole slot
+// Decided (Thomas, 2026-10-11): 60 s per sample and a 64 MiB budget for the whole slot
 // set. Version 1 sends the set as one SetState frame, so it cannot be larger than one wire
 // payload. One 60 s stereo sample is about 23 MB.
 constexpr std::size_t kMaxBlobBytes = phylo::host::kMaxPayloadBytes;
