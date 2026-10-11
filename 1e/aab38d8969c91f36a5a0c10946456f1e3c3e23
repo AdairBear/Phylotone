@@ -1,0 +1,21 @@
+CONTINUATION.md
+  s_8da52acdd1337e::t_a3ffe1be9d4a5f 76-77,201-259
+docs/HANDOFF.md
+  s_8da52acdd1337e::t_f78a45e3e44f89 128-131
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1eaab38d8969c91f36a5a0c10946456f1e3c3e23",
+  "prompts": {},
+  "sessions": {
+    "s_8da52acdd1337e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aeaaba4f-8f90-45a0-8b53-f782f2cf3037",
+        "model": "unknown"
+      },
+      "human_author": "Thomas Adair <34932535+AdairBear@users.noreply.github.com>"
+    }
+  }
+}
