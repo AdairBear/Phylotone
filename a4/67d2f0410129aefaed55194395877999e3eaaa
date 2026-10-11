@@ -1,0 +1,23 @@
+core/include/phylo/samples/SampleBlob.h
+  s_8da52acdd1337e::t_1be315fd0536ce 26
+core/src/samples/SampleBlob.cpp
+  s_8da52acdd1337e::t_134dad0984a3b7 237-238
+core/src/samples/SampleLibrary.cpp
+  s_8da52acdd1337e::t_f326be82320134 75,78
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a467d2f0410129aefaed55194395877999e3eaaa",
+  "prompts": {},
+  "sessions": {
+    "s_8da52acdd1337e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aeaaba4f-8f90-45a0-8b53-f782f2cf3037",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Thomas Adair <34932535+AdairBear@users.noreply.github.com>"
+    }
+  }
+}
