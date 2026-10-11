@@ -128,7 +128,11 @@ void PipelinedRenderer::work()
         {
             std::unique_ptr<PendingSamples> owned(pending);
             const bool ok = supervisor_->setSamples(owned->blob);
-            const std::string status = ok ? "samples accepted" : "samples refused: " + supervisor_->lastSamplesError();
+            // A refusal is the host's answer. Anything else means the blob never got an answer.
+            const bool hostUp = supervisor_->state() == PluginHostSupervisor::State::Running;
+            const std::string status = ok ? "samples accepted"
+                                          : (hostUp ? "samples refused: " : "samples not sent: ") +
+                                                supervisor_->lastSamplesError();
             {
                 // Only the newest blob writes the status. If another sendSamples came in
                 // while this one was being sent, its "queued" stays until it is answered.

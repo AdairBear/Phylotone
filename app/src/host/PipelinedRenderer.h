@@ -31,7 +31,7 @@ public:
     static constexpr std::size_t kMaxQueued = 4;
 
     explicit PipelinedRenderer(std::unique_ptr<PluginHostSupervisor> supervisor);
-    ~PipelinedRenderer();
+    ~PipelinedRenderer() override;
 
     PipelinedRenderer(const PipelinedRenderer&) = delete;
     PipelinedRenderer& operator=(const PipelinedRenderer&) = delete;
@@ -59,7 +59,8 @@ public:
     // that the worker has not picked up yet is replaced.
     void sendSamples(std::vector<std::uint8_t> blob);
     // What the last sendSamples did, for the status line: "samples queued", "samples
-    // accepted", or "samples refused: <reason>". Empty until samples have been sent.
+    // accepted", "samples refused: <reason>" (the host's answer), or "samples not sent:
+    // <reason>" (no host to answer). Empty until samples have been sent.
     std::string samplesStatus() const;
     // Counts sendSamples calls the worker has finished with (accepted or not), so a caller
     // can tell when the status belongs to the blob it sent.
