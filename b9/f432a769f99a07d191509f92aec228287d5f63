@@ -1,0 +1,25 @@
+CONTINUATION.md
+  s_9fb8b1c7448915::t_f3e6811ad56739 87,89-90,260-269
+docs/HANDOFF.md
+  s_9fb8b1c7448915::t_0397e6deacc5ce 141-144,171,173
+core/include/phylo/samples/SampleBlob.h
+  s_9fb8b1c7448915::t_ccc219d678c405 57-58,62
+docs/SAMPLE_INTERFACE.md
+  s_9fb8b1c7448915::t_6cd315b14ecf80 3-4,71,95,154,156-164
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b9f432a769f99a07d191509f92aec228287d5f63",
+  "prompts": {},
+  "sessions": {
+    "s_9fb8b1c7448915": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e442f318-87ed-458a-a726-04982b8372b3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Thomas Adair <34932535+AdairBear@users.noreply.github.com>"
+    }
+  }
+}
