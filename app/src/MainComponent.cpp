@@ -20,13 +20,15 @@ constexpr int kRowHeightPx = 32;
 constexpr int kScenePollMs = 250;
 constexpr double kFeedSampleRateHz = 48000.0; // replaced by the device rate when it starts
 constexpr std::size_t kFeedBlockFrames = 512;
+constexpr int kSamplePanelHeightPx = 200;
 
 const char* kPlaybackTemplate =
     "# Plugin audio settings. Fill in both lines, then turn on Plugin audio in the app.\n"
     "# Any line left empty is read from PHYLO_PLUGHOST and PHYLO_PLUGIN instead.\n"
     "# plughost=/path/to/phylo-plughost\n"
     "# plugin=/path/to/Akazi XL.vst3\n"
-    "# state=/path/to/plugin-state.bin  (optional: raw plugin state, restored when Plugin audio starts)\n";
+    "# state=/path/to/plugin-state.bin  (STOPGAP: raw plugin state, restored when Plugin audio starts. "
+    "The sample library below replaces it once Akazi XL reads sample slots.)\n";
 
 const char* kDefaultScene =
     "// Phylotone scene. Save this file while the app runs and the change\n"
@@ -61,10 +63,18 @@ juce::File playbackSettingsLocation()
         .getChildFile("Phylotone")
         .getChildFile("playback.txt");
 }
+
+juce::File samplesLocation()
+{
+    return juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
+        .getChildFile("Phylotone")
+        .getChildFile("samples");
+}
 } // namespace
 
 MainComponent::MainComponent()
-    : assistantController(sceneLocation(), assistantSettingsLocation())
+    : sampleSession(samplesLocation().getFullPathName().toStdString()),
+      assistantController(sceneLocation(), assistantSettingsLocation())
 {
     sceneFile = sceneLocation();
     if (!sceneFile.existsAsFile())
@@ -113,6 +123,7 @@ MainComponent::MainComponent()
     sceneLabel.setJustificationType(juce::Justification::centredLeft);
     statusLabel.setJustificationType(juce::Justification::centredLeft);
     pluginLabel.setJustificationType(juce::Justification::centredLeft);
+    samplesLabel.setJustificationType(juce::Justification::centredLeft);
 
     addAndMakeVisible(titleLabel);
     addAndMakeVisible(playButton);
@@ -126,13 +137,30 @@ MainComponent::MainComponent()
     addAndMakeVisible(sceneLabel);
     addAndMakeVisible(statusLabel);
     addAndMakeVisible(pluginLabel);
+    addAndMakeVisible(samplesLabel);
+    addAndMakeVisible(samplePanel);
     addAndMakeVisible(assistantPanel);
+
+    samplePanel.onMessage = [this](const juce::String& text)
+    {
+        lastSampleMessage = text;
+        updateSamplesLine();
+    };
+    samplePanel.onSlotsChanged = [this] { sendSamples(); };
+
+    const auto opened = sampleSession.open();
+    if (!opened.ok)
+        sampleOpenProblem = "Sample library: " + juce::String::fromUTF8(opened.message.c_str());
+    else if (!sampleSession.library().warnings().empty())
+        sampleOpenProblem = juce::String::fromUTF8(sampleSession.library().warnings().front().c_str());
+    samplePanel.refresh();
+    updateSamplesLine();
 
     loadPlaybackSettings();
     refreshOutputs();
     reloadSceneIfChanged();
     startTimer(kScenePollMs);
-    setSize(600, 780);
+    setSize(600, 1000);
 }
 
 MainComponent::~MainComponent()
@@ -209,6 +237,10 @@ void MainComponent::setPluginAudio(bool on)
             else
                 pluginError = "State file not found: " + juce::String(playbackSettings.state);
         }
+
+        // Samples go second, after the state, and only when there is something to send.
+        if (sampleSession.assignedSlots() > 0)
+            sendSamples();
     }
 
     const auto error = audio->open();
@@ -241,6 +273,73 @@ void MainComponent::timerCallback()
 {
     reloadSceneIfChanged();
     assistantController.pollSceneFile();
+    updateSamplesLine();
+}
+
+bool MainComponent::isInterestedInFileDrag(const juce::StringArray& files)
+{
+    for (const auto& f : files)
+        if (f.endsWithIgnoreCase(".wav"))
+            return true;
+    return false;
+}
+
+void MainComponent::filesDropped(const juce::StringArray& files, int, int)
+{
+    samplePanel.importFiles(files);
+}
+
+void MainComponent::sendSamples()
+{
+    std::vector<std::uint8_t> blob;
+    int slots = 0;
+    const auto built = sampleSession.buildBlob(blob, slots, std::getenv(kSampleFaultEnv));
+    if (!built.ok)
+    {
+        // Send nothing: the plugin keeps the slots it already has.
+        sampleBuildError = "samples not sent: " + juce::String::fromUTF8(built.message.c_str());
+        updateSamplesLine();
+        return;
+    }
+    sampleBuildError = {};
+
+    if (renderer)
+    {
+        renderer->sendSamples(std::move(blob));
+        slotsSent = slots;
+    }
+    updateSamplesLine();
+}
+
+void MainComponent::updateSamplesLine()
+{
+    const auto& library = sampleSession.library();
+    juce::String text = "Samples: " + juce::String(static_cast<int>(library.entries().size())) + " in library, " +
+                        juce::String(sampleSession.assignedSlots()) + " slots";
+
+    if (sampleOpenProblem.isNotEmpty())
+        text += "  |  " + sampleOpenProblem;
+    if (sampleBuildError.isNotEmpty())
+        text += "  |  " + sampleBuildError;
+    else if (!renderer)
+        text += "  |  slots are sent when Plugin audio starts";
+    else
+    {
+        const auto status = renderer->samplesStatus();
+        if (!status.empty())
+            text += "  |  " + juce::String(status);
+    }
+
+    if (const char* fault = std::getenv(kSampleFaultEnv); fault != nullptr && fault[0] != '\0')
+        text += "  |  test fault: " + juce::String(fault);
+    if (lastSampleMessage.isNotEmpty())
+        text += "  |  " + lastSampleMessage;
+
+    if (text != sampleLineShown)
+    {
+        sampleLineShown = text;
+        samplesLabel.setText(text, juce::dontSendNotification);
+    }
 }
 
 void MainComponent::reloadSceneIfChanged()
@@ -419,6 +518,9 @@ void MainComponent::resized()
     sceneLabel.setBounds(area.removeFromTop(kRowHeightPx));
     statusLabel.setBounds(area.removeFromTop(kRowHeightPx));
     pluginLabel.setBounds(area.removeFromTop(kRowHeightPx));
+    samplesLabel.setBounds(area.removeFromTop(kRowHeightPx));
+    area.removeFromTop(kMarginPx / 2);
+    samplePanel.setBounds(area.removeFromTop(kSamplePanelHeightPx));
     area.removeFromTop(kMarginPx);
 
     assistantPanel.setBounds(area);
