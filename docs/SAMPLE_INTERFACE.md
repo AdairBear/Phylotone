@@ -1,9 +1,9 @@
 # Phylotone to Akazi XL: sample interface
 
-*Draft v0.2, proposal. Akazi XL's side is not agreed yet. The three open questions were
-decided on 2026-10-11 (see "Decisions"). v0.2 adds the byte layout that
-Phylotone's side now implements (see "Byte layout"), and the points found while building
-it (see "Found while building"). v0.1 was the first proposal, merged in #25.*
+*v1.0, agreed on both sides (2026-10-11). Phylotone implements the host and the sender; Akazi XL
+implements the plugin side. v0.2 added the byte layout; v1.0 adds how a blob is delivered to the
+plugin and how the plugin answers (see "Delivery" and "The answer"), and records the decisions
+of 2026-10-11 (see "Decisions"). v0.1 was the first proposal, merged in #25.*
 
 ## Purpose
 
@@ -46,9 +46,11 @@ it. Phylotone sends the full slot set as one state blob:
 - The blob is a full replacement. Phylotone sends every non-empty slot each time, so a
   slot that is missing from the blob is cleared.
 
-Phylotone may send the blob again at any time (tempo changes do not need it). Akazi XL
-answers with a StateResult. An empty text answer means the blob was accepted. A text
-answer is the refusal reason, for the status line.
+Phylotone may send the blob again at any time (tempo changes do not need it). The host
+answers with a StateResult. **An empty text answer means the plugin loaded the set.** A text
+answer is the refusal reason, for the status line. How the plugin's answer reaches the host
+is in "The answer". (Before v1.0 an empty answer only meant that the host had accepted the
+blob. It now means the plugin loaded it, because the host can ask the plugin.)
 
 ### Byte layout
 
@@ -97,15 +99,106 @@ all slots. See decision 2.
 Version 2, if needed, would add a per-slot message so a single change does not resend
 the whole set. Not part of v1.
 
+## Delivery
+
+How the blob gets from the host process to the plugin's `setStateInformation`.
+
+**VST3.** JUCE's VST3 host accepts only its own XML wrapper through `setStateInformation` and
+drops other bytes, so the host does not use that call. It hands the blob over as the VST3
+**component state**, through JUCE's public extension API:
+
+1. `AudioPluginInstance::getExtensions` gives an `ExtensionsVisitor::VST3Client`.
+2. `getPreset()` returns the plugin's state as a VST3 preset container (the `.vstpreset`
+   layout: `VST3`, version 1, a 32-digit class ID, the offset of a `List` of chunks such as
+   `Comp` and `Cont`). The host reads the class ID from it.
+3. The host builds a new container with that class ID and one `Comp` chunk holding the raw
+   blob, and gives it to `setPreset()`.
+4. JUCE's plugin wrapper passes component-state bytes unchanged to the processor's
+   `setStateInformation`, so Akazi XL sees bytes that start with `akazi.samples.`. No base64
+   and no XML around up to 64 MiB.
+
+The container reader and builder are in `phylo_core` (`phylo/host/Vst3Preset.h`) and treat
+their input as hostile: every offset and size is checked before use.
+
+**Other formats.** The raw bytes go to `setStateInformation`, as for any plugin state.
+
+**Order.** Phylotone sends the plugin's plain state first and the sample set after it, so the
+slots win after a host start.
+
+**Message loop and audio thread.** The plugin may apply a MIDI Program Change from a
+message-thread timer, and that work can take a while (Akazi XL builds the new slot's sample
+when it becomes the source: about half a second for a 60 s sample). `phylo-plughost` therefore
+reads and splits its input on a second thread, runs the message loop on its main thread while
+it waits, and renders Process blocks on a third (audio) thread, so a slow timer neither stalls
+the timer from firing nor holds up the audio answer.
+
+## The answer
+
+`setStateInformation` returns nothing, so the plugin answers through its own state. The
+plugin's state XML (what `getStateInformation` writes) carries three attributes on its root
+element once a sample set has been received. They describe the **last** sample set received:
+
+| Attribute | Value |
+|---|---|
+| `sampleSetBytes` | size of the received blob in bytes, decimal |
+| `sampleSetHash` | FNV-1a 64-bit of every byte of the received blob, 16 lowercase hex digits |
+| `sampleSetResult` | empty when the set was loaded; otherwise the refusal reason, one line |
+
+FNV-1a 64: start with 14695981039346656037 (0xcbf29ce484222325); for each byte, xor the byte,
+then multiply by 1099511628211 (0x100000001b3), modulo 2^64. (Check values: the empty input
+hashes to `cbf29ce484222325`, the single byte `a` to `af63dc4c8601ec8c`.)
+
+The attributes are absent until a sample set has arrived. They are written at save time only
+and are ignored when an XML state is restored. Restoring an XML state does not touch the slots.
+
+On SetState with bytes that start with `akazi.samples.` the host:
+
+1. Checks the blob with the core decoder. A bad blob is refused by the host with the decoder's
+   reason and never reaches the plugin, even when no plugin is loaded.
+2. Delivers it (see "Delivery").
+3. Reads the plugin's state back (VST3: `getPreset()` and the `Comp` chunk; other formats:
+   `getStateInformation`), parses it with `AudioProcessor::getXmlFromBinary`, and reads the
+   three attributes.
+4. If `sampleSetBytes` and `sampleSetHash` match the blob just sent, StateResult is
+   `sampleSetResult`: empty means loaded, otherwise the plugin's own reason. In every other
+   case (attributes absent, no match, state unreadable) StateResult is
+   `the plugin did not take the sample set`. That is what an old Akazi XL, or any other
+   plugin, gets.
+
+So **an empty StateResult for a sample set means the plugin loaded it.** Everything else about
+SetState (plain plugin state, the `state=` stopgap) is unchanged.
+
+For tests, the environment variable `PHYLO_HOST_SKIP_BLOB_CHECK=1` makes the host skip its own
+blob check so that a bad blob reaches the plugin and the plugin's own refusal can be seen.
+
+## Slot-to-sampler mapping (Akazi XL)
+
+Defined in Akazi XL's `docs/SAMPLE_SLOTS.md`, which is the reference. In short, for v1:
+
+- The plugin holds up to 128 slots (0 to 127). It plays **one active slot** at a time, as it
+  played one sample before.
+- The active slot is the automatable parameter **Sample Slot** (0 to 127, default 0). A MIDI
+  **Program Change** n on any channel sets it to n (applied from a timer within about 50 ms,
+  not sample-accurate).
+- The slot's **root note** is the key that plays it at its own pitch. A slot that is empty
+  plays silence. The last source wins: loading a file makes the file the source; an accepted
+  set or a Sample Slot change makes a slot the source.
+- Not in v1: several slots at once (a drum kit), per-note slot mapping, per-slot parameters.
+  That is the next step.
+
 ## Operations (what the plugin does)
 
 - **Accept a slot set.** Replace all slots with the ones in the blob.
 - **Refuse a slot set.** Return a reason and keep the current slots. Refusals: unknown
-  format header, a sample over the length limit, a slot number out of range, a sample
-  rate other than 48 kHz, a truncated blob. The byte layout adds the rest of the checks
-  (see "Byte layout").
+  format header (any header that starts `akazi.samples.` but is not `akazi.samples.v1`), a
+  sample over the length limit, a slot number out of range, a sample rate other than 48 kHz,
+  a truncated blob. The byte layout adds the rest of the checks (see "Byte layout"). Running
+  out of memory is a refusal too ("not enough memory for the sample set"), not a crash.
 - **Keep the sample when the host restarts.** Phylotone sends the blob again after a
-  host restart, so Akazi XL does not need to store anything on disk.
+  host restart, so Akazi XL does not need to store anything on disk. The plugin never
+  stores slot audio in its own saved state.
+- **Always record the answer** for the last blob it received, accepted or refused (see
+  "The answer").
 
 ## Not part of this interface
 
@@ -126,28 +219,26 @@ the whole set. Not part of v1.
 ## Akazi XL side (what the plugin must add)
 
 - Read the `akazi.samples.v1` blob in SetState and map its slots to the sampler.
-- Answer StateResult with an empty text on success, or the refusal reason.
+- Record the answer (the three state attributes) for every sample blob it receives.
 - Document the slot-to-sampler mapping in Akazi XL's own docs.
 
-## Found while building (Phylotone side, v0.2)
+## Found while building (Phylotone side) and what was decided
 
-These came up in the build. None is settled.
+These came up while building v0.2. All are settled in v1.0.
 
-1. **A raw blob does not reach a VST3 plugin through JUCE's host.** `phylo-plughost` calls
-   the hosted plugin's `setStateInformation`. For VST3, JUCE's host side only accepts its
-   own XML wrapper there and drops any other bytes without an error. So the raw blob never
-   arrives at Akazi XL today, and the plugin cannot answer through that call either: it
-   returns nothing. The stopgap `state=` file works because it holds bytes the plugin made
-   through the same wrapper.
-2. **So the host answers StateResult for a sample blob, not the plugin.** `phylo-plughost`
-   recognises bytes that start with `akazi.samples.`, checks them with the same decoder,
-   and answers the refusal reason itself. A refused blob is not passed to the plugin, so
-   the plugin keeps what it had. A valid blob is passed on as before.
-3. **Still to agree with Akazi XL:** how a valid blob is delivered to the plugin (for
-   example, the host wraps it as the VST3 component state so it arrives in the plugin's
-   `setStateInformation`), and how the plugin reports a refusal of its own (for example
-   out of memory). Until then an empty StateResult means "the host accepted the blob",
-   not "Akazi XL loaded it".
+1. **A raw blob did not reach a VST3 plugin through JUCE's host.** `phylo-plughost` called the
+   hosted plugin's `setStateInformation`. For VST3, JUCE's host side only accepts its own XML
+   wrapper there and drops any other bytes without an error. **Decided:** the host delivers the
+   blob as the VST3 component state through a preset container (see "Delivery"). Other
+   formats get the raw bytes.
+2. **The plugin could not answer through that call: it returns nothing.** **Decided:** the
+   plugin records the answer in three attributes of its state XML and the host reads them back
+   (see "The answer"). The host still checks the blob first; a refused blob does not reach the
+   plugin, so the plugin keeps what it had.
+3. **What an empty StateResult means.** It used to mean "the host accepted the blob". **Decided:**
+   from v1.0 it means the plugin loaded the set. A plugin that did not record this exact blob
+   (an older Akazi XL, or any other plugin) is reported as `the plugin did not take the sample set`.
+   A refusal of the plugin's own, such as running out of memory, comes back as its reason.
 4. **The two state paths are kept apart.** The stopgap `state=` bytes and the sample blob
    are stored and re-sent separately after a host restart, the plugin state first.
 
@@ -159,6 +250,5 @@ These were the open questions of v0.2. Thomas answered "yes to all three".
 2. **Budget.** 60 seconds per sample, and 64 MiB for the whole set (see "Size").
 3. **Loaded slots in StateResult.** Not in v1. Deferred to v2, with the per-slot message.
 
-Still open: how a valid blob is delivered to the plugin and how the plugin reports its own
-refusal ("Found while building", point 3). Thomas approved the Akazi XL work for this on
-2026-10-11 (handoff 8.7). The design is agreed in that work, not here.
+Delivery and the answer were agreed on 2026-10-11 and are described above. Thomas approved the
+Akazi XL work for them on the same day (handoff 8.7).

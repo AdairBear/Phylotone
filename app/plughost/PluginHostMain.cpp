@@ -40,9 +40,14 @@ namespace
 constexpr std::uint32_t kSampleRate = 48000;
 constexpr std::uint32_t kMaxBlock = 4096;
 
+// Frames are written by the message thread and by the audio thread, so a frame is written
+// whole under a lock.
+std::mutex gWriteMutex;
+
 void writeFrame(phylo::host::MsgType type, const std::vector<std::uint8_t>& payload)
 {
     const auto bytes = phylo::host::encodeFrame(type, payload);
+    std::lock_guard<std::mutex> lock(gWriteMutex);
     std::fwrite(bytes.data(), 1, bytes.size(), stdout);
     std::fflush(stdout);
 }
@@ -77,29 +82,42 @@ struct Vst3Visitor : juce::ExtensionsVisitor
     bool visited = false;
 };
 
-// Reads stdin on its own thread so the main (message) thread can keep the plugin's message
-// loop running while it waits. Plugins use message-thread timers and async updates (for
-// example to apply a MIDI Program Change); they never fire if the main thread sits in a
-// blocking read. The queue is bounded, so a fast writer waits instead of filling memory.
+// Reads stdin and splits it into frames on its own thread. Process frames go straight to
+// `onProcess` (the audio thread's queue); every other frame is queued for the main (message)
+// thread. This keeps two things true while the main thread is busy: the plugin's timers and
+// async updates can run (for example the one that applies a MIDI Program Change), and a
+// Process request is still taken in at once even when such a timer does slow work. The queue
+// is bounded, so a fast writer waits instead of filling memory.
 class StdinReader
 {
 public:
-    StdinReader() : thread_([this] { run(); }) { thread_.detach(); }
+    using ProcessSink = std::function<void(phylo::host::Frame&&)>;
 
-    // Waits up to `waitMs` for input. Appends what arrived to `out`. Returns false once the
-    // app has closed the pipe and everything it sent has been handed over.
-    bool poll(std::vector<std::uint8_t>& out, int waitMs)
+    explicit StdinReader(ProcessSink onProcess) : onProcess_(std::move(onProcess)), thread_([this] { run(); })
+    {
+        thread_.detach();
+    }
+
+    enum class Status { Open, Closed, Damaged };
+
+    // Waits up to `waitMs` for frames. Appends the non-Process frames that arrived to `out`.
+    // Closed: the app closed the pipe and everything it sent has been handed over. Damaged:
+    // the stream is broken (`error` says how) after everything before it has been handed over.
+    Status poll(std::vector<phylo::host::Frame>& out, int waitMs, std::string& error)
     {
         std::unique_lock<std::mutex> lock(mutex_);
-        ready_.wait_for(lock, std::chrono::milliseconds(waitMs), [this] { return !queue_.empty() || eof_; });
+        ready_.wait_for(lock, std::chrono::milliseconds(waitMs), [this] { return !queue_.empty() || ended_; });
         while (!queue_.empty())
         {
-            out.insert(out.end(), queue_.front().begin(), queue_.front().end());
-            queuedBytes_ -= queue_.front().size();
+            queuedBytes_ -= queue_.front().payload.size();
+            out.push_back(std::move(queue_.front()));
             queue_.pop_front();
         }
         space_.notify_all();
-        return !(eof_ && out.empty());
+        if (!out.empty() || !ended_)
+            return Status::Open;
+        error = error_;
+        return error_.empty() ? Status::Closed : Status::Damaged;
     }
 
 private:
@@ -108,6 +126,7 @@ private:
     void run()
     {
         std::vector<std::uint8_t> chunk(64 * 1024);
+        phylo::host::FrameDecoder decoder;
         for (;;)
         {
             // read() returns what is available now. fread() would wait for a full buffer,
@@ -117,31 +136,57 @@ private:
 #else
             const ssize_t n = read(STDIN_FILENO, chunk.data(), chunk.size());
 #endif
-            std::unique_lock<std::mutex> lock(mutex_);
             if (n <= 0)
             {
-                eof_ = true;
-                ready_.notify_all();
+                end("");
                 return;
             }
-            space_.wait(lock, [this] { return queuedBytes_ < kMaxQueuedBytes; });
-            queue_.emplace_back(chunk.begin(), chunk.begin() + n);
-            queuedBytes_ += static_cast<std::size_t>(n);
-            ready_.notify_all();
+
+            decoder.feed(chunk.data(), static_cast<std::size_t>(n));
+            phylo::host::Frame frame;
+            while (decoder.next(frame))
+            {
+                if (frame.type == phylo::host::MsgType::Process)
+                {
+                    onProcess_(std::move(frame));
+                    continue;
+                }
+                std::unique_lock<std::mutex> lock(mutex_);
+                space_.wait(lock, [this] { return queuedBytes_ < kMaxQueuedBytes; });
+                queuedBytes_ += frame.payload.size();
+                queue_.push_back(std::move(frame));
+                ready_.notify_all();
+            }
+            if (decoder.failed())
+            {
+                end(decoder.error());
+                return;
+            }
         }
     }
 
+    void end(const std::string& error)
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        ended_ = true;
+        error_ = error;
+        ready_.notify_all();
+    }
+
+    ProcessSink onProcess_;
     std::mutex mutex_;
     std::condition_variable ready_;
     std::condition_variable space_;
-    std::deque<std::vector<std::uint8_t>> queue_;
+    std::deque<phylo::host::Frame> queue_;
     std::size_t queuedBytes_ = 0;
-    bool eof_ = false;
+    bool ended_ = false;
+    std::string error_;
     std::thread thread_;
 };
 
 struct Host
 {
+    std::mutex pluginMutex;
     juce::AudioPluginFormatManager formats;
     std::unique_ptr<juce::AudioPluginInstance> plugin;
 
@@ -153,6 +198,7 @@ struct Host
     // Loads the first plugin found in the file. Returns an empty string on success.
     std::string load(const juce::String& path)
     {
+        std::lock_guard<std::mutex> lock(pluginMutex);
         plugin.reset();
         const juce::File file(path);
         if (!file.exists())
@@ -267,8 +313,11 @@ struct Host
         return xml->getStringAttribute("sampleSetResult").toStdString();
     }
 
+    // Runs on the audio thread. Holds pluginMutex only against load(), which replaces the
+    // plugin; state calls on the message thread run alongside it, as in any host.
     void process(const phylo::host::ProcessRequest& req)
     {
+        std::lock_guard<std::mutex> lock(pluginMutex);
         const int channels = static_cast<int>(req.channels);
         const int frames = static_cast<int>(req.frames);
 
@@ -302,6 +351,63 @@ struct Host
     }
 };
 
+// Renders on its own thread. The message thread must stay free to run the plugin's timers,
+// which can do slow work (for example Akazi XL building a long sample when a Program Change
+// selects a slot); a plugin never expects those to hold up its audio, and the app gives up
+// on a host that does not answer a block in time.
+class AudioWorker
+{
+public:
+    explicit AudioWorker(Host& host) : host_(host), thread_([this] { run(); }) {}
+
+    ~AudioWorker()
+    {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            stop_ = true;
+        }
+        wake_.notify_all();
+        thread_.join();
+    }
+
+    AudioWorker(const AudioWorker&) = delete;
+    AudioWorker& operator=(const AudioWorker&) = delete;
+
+    void submit(phylo::host::ProcessRequest&& request)
+    {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            queue_.push_back(std::move(request));
+        }
+        wake_.notify_one();
+    }
+
+private:
+    void run()
+    {
+        for (;;)
+        {
+            phylo::host::ProcessRequest request;
+            {
+                std::unique_lock<std::mutex> lock(mutex_);
+                wake_.wait(lock, [this] { return stop_ || !queue_.empty(); });
+                if (queue_.empty())
+                    return; // stopping, and everything submitted has been answered
+                request = std::move(queue_.front());
+                queue_.pop_front();
+            }
+            host_.process(request);
+        }
+    }
+
+    Host& host_;
+    std::mutex mutex_;
+    std::condition_variable wake_;
+    std::deque<phylo::host::ProcessRequest> queue_;
+    bool stop_ = false;
+    std::thread thread_;
+};
+
 } // namespace
 
 int runHost();
@@ -330,15 +436,32 @@ int runHost()
                phylo::host::encodeHello(phylo::host::kProtocolVersion, kSampleRate, kMaxBlock));
 
     Host host;
-    phylo::host::FrameDecoder decoder;
-    StdinReader input;
-    std::vector<std::uint8_t> incoming;
+    AudioWorker audio(host); // declared after host: it stops first
+    StdinReader input(
+        [&audio](phylo::host::Frame&& f)
+        {
+            phylo::host::ProcessRequest req;
+            if (!phylo::host::decodeProcess(f.payload, req) || req.frames > kMaxBlock || req.channels > 8)
+            {
+                writeError("bad process payload");
+                return;
+            }
+            audio.submit(std::move(req));
+        });
+    std::vector<phylo::host::Frame> incoming;
 
     for (;;)
     {
         incoming.clear();
-        if (!input.poll(incoming, 5))
+        std::string streamError;
+        const auto status = input.poll(incoming, 5, streamError);
+        if (status == StdinReader::Status::Closed)
             return 0; // app closed the pipe
+        if (status == StdinReader::Status::Damaged)
+        {
+            writeError("stream damaged: " + streamError);
+            return 1;
+        }
 
         if (incoming.empty())
         {
@@ -347,10 +470,7 @@ int runHost()
             continue;
         }
 
-        decoder.feed(incoming.data(), incoming.size());
-
-        phylo::host::Frame frame;
-        while (decoder.next(frame))
+        for (auto& frame : incoming)
         {
             switch (frame.type)
             {
@@ -364,17 +484,6 @@ int runHost()
                 }
                 const std::string err = host.load(juce::String(juce::CharPointer_UTF8(path.c_str())));
                 writeFrame(phylo::host::MsgType::Loaded, phylo::host::encodeText(err));
-                break;
-            }
-            case phylo::host::MsgType::Process:
-            {
-                phylo::host::ProcessRequest req;
-                if (!phylo::host::decodeProcess(frame.payload, req) || req.frames > kMaxBlock || req.channels > 8)
-                {
-                    writeError("bad process payload");
-                    break;
-                }
-                host.process(req);
                 break;
             }
             case phylo::host::MsgType::GetState:
@@ -404,6 +513,7 @@ int runHost()
             }
             case phylo::host::MsgType::Shutdown:
                 return 0;
+            case phylo::host::MsgType::Process: // taken in by the reader and rendered on the audio thread
             case phylo::host::MsgType::Hello:
             case phylo::host::MsgType::Loaded:
             case phylo::host::MsgType::Audio:
@@ -414,12 +524,6 @@ int runHost()
                 writeError("unexpected message from app");
                 break;
             }
-        }
-
-        if (decoder.failed())
-        {
-            writeError("stream damaged: " + decoder.error());
-            return 1;
         }
     }
 }
