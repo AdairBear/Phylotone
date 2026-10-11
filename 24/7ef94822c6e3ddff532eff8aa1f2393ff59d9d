@@ -1,0 +1,43 @@
+app/src/SampleSession.cpp
+  s_8da52acdd1337e::t_916d4d856d636a 1-3
+app/src/host/PipelinedRenderer.h
+  s_8da52acdd1337e::t_8c33e0472f5667 57-67,90-92,94
+app/src/SampleSessionCheck.cpp
+  s_8da52acdd1337e::t_0b1eefa6311891 1-2
+app/src/host/PluginHostSupervisor.h
+  s_8da52acdd1337e::t_08913947f2f742 44-57,84-91
+app/src/SampleLibraryPanel.cpp
+  s_8da52acdd1337e::t_b0ede7a529b851 1
+app/src/SampleSession.h
+  s_8da52acdd1337e::t_21d773c08773db 1-53
+app/src/host/FakeSampleHost.cpp
+  s_8da52acdd1337e::t_d41bf6f7904250 1-2
+app/src/host/PipelinedRenderer.cpp
+  s_8da52acdd1337e::t_d6180b60e392a0 40-58
+app/src/host/SampleSendCheck.cpp
+  s_8da52acdd1337e::t_82ff249ee91a6b 1-2
+docs/SAMPLE_INTERFACE.md
+  s_8da52acdd1337e::t_19fa8feb9f1feb 3-5,52-91,100-101,127-148,154-155
+app/CMakeLists.txt
+  s_8da52acdd1337e::t_db2ea9c7da5af3 45-46,139-168
+app/src/SampleLibraryPanel.h
+  s_8da52acdd1337e::t_dfcc7a2d5aee07 1-2
+app/src/host/PluginHostSupervisor.cpp
+  s_8da52acdd1337e::t_d4b69762b4a2fe 167-175
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "247ef94822c6e3ddff532eff8aa1f2393ff59d9d",
+  "prompts": {},
+  "sessions": {
+    "s_8da52acdd1337e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aeaaba4f-8f90-45a0-8b53-f782f2cf3037",
+        "model": "unknown"
+      },
+      "human_author": "Thomas Adair <34932535+AdairBear@users.noreply.github.com>"
+    }
+  }
+}
