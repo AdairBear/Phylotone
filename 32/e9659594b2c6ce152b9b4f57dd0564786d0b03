@@ -1,0 +1,37 @@
+app/src/MainComponent.cpp
+  s_8da52acdd1337e::t_91cc8d46115804 23,30-31,66-72,76-77,126,140-141,144-158,163,240-243,276-342,521-523
+app/src/MainComponent.h
+  s_8da52acdd1337e::t_a3862e117d155e 7-8,22,31-34,48-51,88-97
+app/src/SampleLibraryPanel.h
+  s_8da52acdd1337e::t_d512f173b0ce8f 2-62
+app/src/SampleSession.cpp
+  s_8276a49eb9c68e::t_4bef15c67eebdb 3-99
+app/src/SampleSessionCheck.cpp
+  s_8276a49eb9c68e::t_bf1ec65a7ce5fb 1-288
+app/src/SampleLibraryPanel.cpp
+  s_8276a49eb9c68e::t_3bb3636160d0a6 2-322
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "32e9659594b2c6ce152b9b4f57dd0564786d0b03",
+  "prompts": {},
+  "sessions": {
+    "s_8276a49eb9c68e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-ab3fdb033103e0caf",
+        "model": "unknown"
+      },
+      "human_author": "Thomas Adair <34932535+AdairBear@users.noreply.github.com>"
+    },
+    "s_8da52acdd1337e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aeaaba4f-8f90-45a0-8b53-f782f2cf3037",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Thomas Adair <34932535+AdairBear@users.noreply.github.com>"
+    }
+  }
+}
