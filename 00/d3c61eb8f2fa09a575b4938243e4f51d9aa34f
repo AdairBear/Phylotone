@@ -1,0 +1,21 @@
+app/src/host/PipelinedRenderer.cpp
+  s_8da52acdd1337e::t_7851c117b70483 131-135
+app/src/host/PipelinedRenderer.h
+  s_8da52acdd1337e::t_bbc6288236bb6b 34,62-63
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "00d3c61eb8f2fa09a575b4938243e4f51d9aa34f",
+  "prompts": {},
+  "sessions": {
+    "s_8da52acdd1337e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aeaaba4f-8f90-45a0-8b53-f782f2cf3037",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Thomas Adair <34932535+AdairBear@users.noreply.github.com>"
+    }
+  }
+}
