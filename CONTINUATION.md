@@ -1,6 +1,8 @@
 # Phylotone: continuation brief
 
-*For any session picking up this project. Last updated 2026-10-08.*
+*For any session picking up this project. Last updated 2026-10-10.*
+
+**Start with `docs/HANDOFF.md`.** It is the current status and the ordered next work. The "Next" list below is kept for the log, but `docs/HANDOFF.md` section 8 is the plan.
 
 ## Read first
 1. `docs/CONTRACT.md`: the completion contract. Everything is measured against it.
@@ -70,16 +72,20 @@
     musically yet.
 - Open decisions are listed at the end of CONTRACT.md.
 
-## Next
-1. Review and merge `m4-audio-thread` (PR #23), then `m4-plugin-state` (stacked on #23), on Thomas's go-ahead.
-2. Plugin state for the app: `playback.txt` has `state=<file>`, restored when Plugin audio starts. A state
-   file must contain a sample for Akazi XL to sound. Making one still needs a step outside the app
-   (the scratch GetState and sourcePath patch). Next: a way to make the state file in the app or a tool,
-   or the sample-path option (patch the state from `sample=` in playback.txt).
-3. M4 sound check (needs a person): Plugin audio on, Play. Kill the host; the app keeps running.
+## Next (as of 2026-10-10; full plan in docs/HANDOFF.md section 8)
+1. Phylotone sample library on a new branch from `kickoff/contract`: `Documents/Phylotone/samples`, index,
+   WAV import (convert to 48 kHz float, refuse over 60 s), slot assignment, and the `akazi.samples.v1`
+   blob sent over SetState (`docs/SAMPLE_INTERFACE.md`). Headless check for the blob codec and refusals.
+2. Recording and drum programming after step 1 (recording writes a WAV into the same library). Sound design stays in Akazi XL.
+3. M4 sound check (needs a person with audio out): Plugin audio on, Play. Kill the host; the app keeps running.
+   Check the Release host.
 4. M4 audio-thread leftovers: `buildBlock` allocates a request each block; `AudioFeed::pull` grows its
    `ready_` deque; a replaced pattern's note storage is freed on the audio thread.
 5. M5 app side (levels, pan, master bus, record in the UI) on the same output.
+6. Akazi XL change list for the sample blob. Separate repo; needs Thomas's go-ahead before anyone touches it.
+
+Open decisions (Thomas): root note per slot (proposed: optional, default middle C); 60 s memory budget;
+whether StateResult reports loaded slots (proposed: v2).
 
 ## Working rules
 - New work goes on a branch with a pull request. Thomas reviews and merges.
@@ -172,6 +178,13 @@
   are shown on a status line and the toggle stays off. Check `phylo_playback_settings` passes; ctest 8/8;
   the app target builds. Not verified: sound through a device (no audio device here), the Release host,
   or live playback.
+- 2026-10-09: PR #23 (M4 audio thread, no mutex in PipelinedRenderer) and PR #24 (M4 plugin state,
+  `state=` in playback.txt, re-sent after host restart) merged on Thomas's go-ahead. #24 was retargeted to
+  `kickoff/contract` after #23 merged. Not verified: sound.
+- 2026-10-10: PR #25 (`docs/SAMPLE_INTERFACE.md`, sample interface proposal v0.1) merged on Thomas's go-ahead.
+  Docs only. Akazi XL side not agreed.
+- 2026-10-10: Handoff written: `docs/HANDOFF.md` (status, components, build and test, milestone table,
+  ordered next work with acceptance checks). This entry replaces the stale "Next" list above.
 - 2026-10-09: PR #21 (M4 Play path) merged on Thomas's go-ahead. CI was green on all six checks.
 - 2026-10-09: M4 lock-free control on `m4-lockfree-feed`: `AudioFeed` setters (sample rate, tempo,
   meter, play, stop, pattern) write atomics, last write wins; the audio thread applies them at the
