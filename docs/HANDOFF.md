@@ -125,6 +125,10 @@ CI: `.github/workflows/ci.yml` on Ubuntu, macOS and Windows. Builds core and app
 
 Spec: `docs/SAMPLE_INTERFACE.md`, merged in #25. Branch from `kickoff/contract`.
 
+**Status:** built on `feat/sample-library`, with headless checks for the codec, the import, the
+library and the send path. The audible check is open. `docs/SAMPLE_INTERFACE.md` is now v0.2: read
+"Found while building" before starting 8.7. Details are in the session log in `CONTINUATION.md`.
+
 1. **Library folder and index.** `Documents/Phylotone/samples/`, one file per sample, plus an index so a sample keeps its name and slot across restarts. Slots 0 to 127.
 2. **Import.** Accept WAV at 16, 24 or 32-bit float, mono or stereo. Convert to 48 kHz, 32-bit float. Refuse anything longer than 60 s in the app, before it is sent.
 3. **Slot assignment.** Phylotone decides the slot number. Expose a way to assign or clear a slot in the UI or scene.
