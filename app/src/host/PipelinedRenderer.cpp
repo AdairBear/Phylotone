@@ -19,6 +19,7 @@ PipelinedRenderer::~PipelinedRenderer()
     stop_.store(true, std::memory_order_release);
     worker_.join();
     delete pendingState_.exchange(nullptr);
+    delete pendingSamples_.exchange(nullptr);
 }
 
 void PipelinedRenderer::restoreState(std::vector<std::uint8_t> bytes)
@@ -39,10 +40,15 @@ std::string PipelinedRenderer::stateStatus() const
 
 void PipelinedRenderer::sendSamples(std::vector<std::uint8_t> blob)
 {
-    // Scaffolding: implemented in the host-path chunk.
-    (void) blob;
-    std::lock_guard<std::mutex> lock(statusMutex_);
-    samplesStatus_ = "samples queued";
+    auto* incoming = new PendingSamples{std::move(blob), 0};
+    {
+        // The status is set before the blob is published, so the worker's answer to this
+        // blob can never be overwritten by this "queued".
+        std::lock_guard<std::mutex> lock(statusMutex_);
+        incoming->seq = ++samplesSeq_;
+        samplesStatus_ = "samples queued";
+    }
+    delete pendingSamples_.exchange(incoming, std::memory_order_acq_rel);
 }
 
 std::string PipelinedRenderer::samplesStatus() const
@@ -116,6 +122,21 @@ void PipelinedRenderer::work()
             const bool ok = supervisor_->setState(*owned);
             std::lock_guard<std::mutex> lock(statusMutex_);
             stateStatus_ = ok ? "plugin state restored" : "plugin state not accepted: " + supervisor_->lastError();
+        }
+
+        if (PendingSamples* pending = pendingSamples_.exchange(nullptr, std::memory_order_acq_rel))
+        {
+            std::unique_ptr<PendingSamples> owned(pending);
+            const bool ok = supervisor_->setSamples(owned->blob);
+            const std::string status = ok ? "samples accepted" : "samples refused: " + supervisor_->lastSamplesError();
+            {
+                // Only the newest blob writes the status. If another sendSamples came in
+                // while this one was being sent, its "queued" stays until it is answered.
+                std::lock_guard<std::mutex> lock(statusMutex_);
+                if (owned->seq == samplesSeq_)
+                    samplesStatus_ = status;
+            }
+            samplesAnswered_.fetch_add(1, std::memory_order_acq_rel);
         }
 
         const std::size_t head = requestHead_.load(std::memory_order_relaxed);

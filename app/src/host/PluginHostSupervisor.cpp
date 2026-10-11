@@ -114,6 +114,10 @@ bool PluginHostSupervisor::ensureRunning()
         if (state_ != State::Running) // a broken host during the state: start again later
             return false;
     }
+
+    // Samples after the plugin state, so the plugin has its own state before the slots.
+    if (haveWantedSamples_ && !sendWantedSamples())
+        return false;
     return true;
 }
 
@@ -166,37 +170,112 @@ bool PluginHostSupervisor::setState(const std::vector<std::uint8_t>& bytes)
 
 bool PluginHostSupervisor::setSamples(const std::vector<std::uint8_t>& blob)
 {
-    // Scaffolding: implemented in the host-path chunk.
     wantedSamples_ = blob;
     haveWantedSamples_ = true;
-    samplesError_ = "samples are not sent yet";
+    samplesError_.clear();
+
+    // A fresh start sends wantedSamples_ inside ensureRunning; a running host gets it here.
+    if (!(pipe_.running() && state_ == State::Running))
+    {
+        if (!ensureRunning())
+        {
+            samplesError_ = error_; // the wanted set is kept for the next start
+            return false;
+        }
+        return samplesError_.empty();
+    }
+
+    std::string text;
+    switch (exchangeState(wantedSamples_, text))
+    {
+    case StateReply::Accepted:
+        acceptedSamples_ = wantedSamples_;
+        haveAcceptedSamples_ = true;
+        return true;
+    case StateReply::Refused:
+        // The host keeps what it had. Go back to the set that is in force.
+        samplesError_ = text;
+        haveWantedSamples_ = haveAcceptedSamples_;
+        wantedSamples_ = acceptedSamples_;
+        return false;
+    case StateReply::Broken:
+        samplesError_ = text; // never judged, so the wanted set stays
+        return false;
+    }
     return false;
 }
 
-bool PluginHostSupervisor::sendState(const std::vector<std::uint8_t>& bytes)
+bool PluginHostSupervisor::sendWantedSamples()
+{
+    std::string text;
+    const StateReply reply = exchangeState(wantedSamples_, text);
+    if (reply == StateReply::Broken)
+    {
+        samplesError_ = text;
+        return false;
+    }
+    if (reply == StateReply::Accepted)
+    {
+        acceptedSamples_ = wantedSamples_;
+        haveAcceptedSamples_ = true;
+        samplesError_.clear();
+        return true;
+    }
+
+    // Refused. Keep the reason: it must outlive the re-send of the previous set below.
+    samplesError_ = text;
+    if (!haveAcceptedSamples_)
+    {
+        // Nothing was ever accepted. Drop the bad blob so it is not sent on every restart.
+        haveWantedSamples_ = false;
+        wantedSamples_.clear();
+        return true;
+    }
+    if (acceptedSamples_ != wantedSamples_)
+    {
+        wantedSamples_ = acceptedSamples_;
+        std::string ignored;
+        if (exchangeState(wantedSamples_, ignored) == StateReply::Broken)
+        {
+            samplesError_ = ignored;
+            return false;
+        }
+    }
+    return true;
+}
+
+PluginHostSupervisor::StateReply PluginHostSupervisor::exchangeState(const std::vector<std::uint8_t>& bytes,
+                                                                     std::string& text)
 {
     const auto request = phylo::host::encodeFrame(MsgType::SetState, bytes);
     if (!pipe_.writeAll(request.data(), request.size()))
     {
         fail("host pipe broke while sending the state");
-        return false;
+        text = error_;
+        return StateReply::Broken;
     }
 
+    error_.clear(); // so a failure below reports its own cause, not an old one
     Frame frame;
     if (!awaitFrame(MsgType::StateResult, kStateTimeoutMs, frame))
     {
         fail(error_.empty() ? "host did not answer the state in time" : error_);
-        return false;
+        text = error_;
+        return StateReply::Broken;
     }
 
-    std::string text;
+    text.clear();
     phylo::host::decodeText(frame.payload, text);
-    if (!text.empty())
-    {
+    return text.empty() ? StateReply::Accepted : StateReply::Refused;
+}
+
+bool PluginHostSupervisor::sendState(const std::vector<std::uint8_t>& bytes)
+{
+    std::string text;
+    const StateReply reply = exchangeState(bytes, text);
+    if (reply == StateReply::Refused)
         error_ = "state refused: " + text;
-        return false;
-    }
-    return true;
+    return reply == StateReply::Accepted;
 }
 
 void PluginHostSupervisor::killHostForTesting()

@@ -8,6 +8,7 @@
 // is 4096 frames. Both are sent in Hello so the app can check them.
 
 #include "phylo/host/Wire.h"
+#include "phylo/samples/SampleBlob.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
@@ -215,8 +216,16 @@ int runHost()
                 writeFrame(phylo::host::MsgType::State, host.getState());
                 break;
             case phylo::host::MsgType::SetState:
-                writeFrame(phylo::host::MsgType::StateResult, phylo::host::encodeText(host.setState(frame.payload)));
+            {
+                // A sample blob is checked before the plugin sees it, and a bad one is refused
+                // with its reason even when no plugin is loaded (docs/SAMPLE_INTERFACE.md,
+                // "Found while building"). Other bytes are plugin state and pass through.
+                std::string refusal = phylo::samples::sampleBlobRefusal(frame.payload.data(), frame.payload.size());
+                if (refusal.empty())
+                    refusal = host.setState(frame.payload);
+                writeFrame(phylo::host::MsgType::StateResult, phylo::host::encodeText(refusal));
                 break;
+            }
             case phylo::host::MsgType::Shutdown:
                 return 0;
             case phylo::host::MsgType::Hello:

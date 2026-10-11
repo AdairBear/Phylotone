@@ -87,10 +87,17 @@ private:
     std::atomic<bool> stop_{false};
     std::atomic<bool> killRequested_{false};
     std::atomic<std::vector<std::uint8_t>*> pendingState_{nullptr}; // owned by whoever holds it
-    std::atomic<std::vector<std::uint8_t>*> pendingSamples_{nullptr}; // owned by whoever holds it
+    // A blob waiting for the worker, with the number of the sendSamples call that made it.
+    struct PendingSamples
+    {
+        std::vector<std::uint8_t> blob;
+        std::uint64_t seq = 0;
+    };
+    std::atomic<PendingSamples*> pendingSamples_{nullptr}; // owned by whoever holds it
     std::atomic<std::size_t> samplesAnswered_{0};
     mutable std::mutex statusMutex_; // guards stateStatus_ and samplesStatus_; never taken on the audio path
     std::string stateStatus_;
     std::string samplesStatus_;
+    std::uint64_t samplesSeq_ = 0; // sendSamples calls so far; guarded by statusMutex_
     std::thread worker_;
 };

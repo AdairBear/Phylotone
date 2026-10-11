@@ -69,6 +69,18 @@ private:
     // Sends one state frame to a running host and waits for the answer.
     bool sendState(const std::vector<std::uint8_t>& bytes);
 
+    // What a SetState exchange came to. Broken means the pipe or the answer failed and the
+    // host has been marked failed; Refused means the host answered with a reason and is fine.
+    enum class StateReply { Accepted, Refused, Broken };
+
+    // The one place a SetState frame is written and its StateResult awaited. `text` gets the
+    // host's refusal reason, or the failure text when Broken.
+    StateReply exchangeState(const std::vector<std::uint8_t>& bytes, std::string& text);
+
+    // Sends the wanted samples to a host that has just started. If the host refuses them,
+    // the accepted set is sent instead. Returns false only when the host broke.
+    bool sendWantedSamples();
+
     // Reads frames until one of `type` arrives, or the timeout passes.
     bool awaitFrame(phylo::host::MsgType type, int timeoutMs, phylo::host::Frame& out);
 
