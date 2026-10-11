@@ -18,6 +18,7 @@ namespace
 constexpr int kMarginPx = 16;
 constexpr int kRowHeightPx = 32;
 constexpr int kScenePollMs = 250;
+constexpr int kSlotChangeDelayMs = 300; // wait this long after the last slot change before sending
 constexpr double kFeedSampleRateHz = 48000.0; // replaced by the device rate when it starts
 constexpr std::size_t kFeedBlockFrames = 512;
 constexpr int kSamplePanelHeightPx = 200;
@@ -146,7 +147,8 @@ MainComponent::MainComponent()
         lastSampleMessage = text;
         updateSamplesLine();
     };
-    samplePanel.onSlotsChanged = [this] { sendSamples(SampleSend::slotChange); };
+    slotChangeDelay.onFire = [this] { sendSamples(SampleSend::slotChange); };
+    samplePanel.onSlotsChanged = [this] { scheduleSlotChangeSend(); };
 
     const auto opened = sampleSession.open();
     if (!opened.ok)
@@ -166,6 +168,7 @@ MainComponent::MainComponent()
 MainComponent::~MainComponent()
 {
     stopTimer();
+    slotChangeDelay.cancel();
     // Close the device before the feed and the renderer it reads from are destroyed.
     if (audio)
         audio->close();
@@ -289,8 +292,17 @@ void MainComponent::filesDropped(const juce::StringArray& files, int, int)
     samplePanel.importFiles(files);
 }
 
+void MainComponent::scheduleSlotChangeSend()
+{
+    slotChangeDelay.restart(kSlotChangeDelayMs);
+    updateSamplesLine();
+}
+
 void MainComponent::sendSamples(SampleSend why)
 {
+    // Whatever is sent now covers every change so far, so a waiting delayed send is not needed.
+    slotChangeDelay.cancel();
+
     // The test fault damages only the blobs sent for a slot change. The blob sent when the
     // host starts stays good, so one run can show both halves of the check: a set that is
     // accepted, then a bad one that is refused while the accepted slots keep playing.
@@ -325,15 +337,22 @@ void MainComponent::updateSamplesLine()
         text += "  |  " + sampleBuildError;
     else if (!renderer)
         text += "  |  slots are sent when Plugin audio starts";
+    else if (slotChangeDelay.pending())
+        text += "  |  samples: sending shortly";
     else
     {
         const auto status = renderer->samplesStatus();
         if (!status.empty())
-            text += "  |  " + juce::String(status);
+            text += "  |  " + juce::String::fromUTF8(status.c_str());
     }
 
     if (const char* fault = std::getenv(kSampleFaultEnv); fault != nullptr && fault[0] != '\0')
-        text += "  |  test fault on slot changes: " + juce::String(fault);
+    {
+        if (isKnownSampleFaultWord(fault))
+            text += "  |  test fault on slot changes: " + juce::String::fromUTF8(fault);
+        else
+            text += "  |  test fault ignored: unknown word " + juce::String::fromUTF8(fault);
+    }
     if (lastSampleMessage.isNotEmpty())
         text += "  |  " + lastSampleMessage;
 

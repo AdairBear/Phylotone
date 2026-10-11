@@ -275,6 +275,19 @@ int main()
         CHECK(s.assignedSlots() == 0);
         CHECK(s.buildBlob(blob, slots, nullptr).ok);
         CHECK(slots == 0);
+
+        CHECK(isKnownSampleFaultWord("slot"));
+        CHECK(!isKnownSampleFaultWord("nonsense"));
+        CHECK(!isKnownSampleFaultWord(""));
+        CHECK(!isKnownSampleFaultWord(nullptr));
+
+        // A fault that needs a slot, asked for on a zero-slot blob, still damages the blob.
+        for (const char* word : {"slot", "length"})
+        {
+            bool zeroBuilt = false;
+            CHECK(faultResult(s, word, zeroBuilt) != BlobError::None);
+            CHECK(zeroBuilt);
+        }
     }
 
     std::error_code ec;

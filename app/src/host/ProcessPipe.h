@@ -26,8 +26,23 @@ public:
     // Starts `exe` with `args`. Any earlier child is stopped first.
     bool start(const std::string& exe, const std::vector<std::string>& args);
 
-    // Writes every byte or returns false (the child has gone).
+    // Writes every byte or returns false (the child has gone). Waits for as long as the child
+    // takes to read; use writeAllWithTimeout for anything that must not block for good.
     bool writeAll(const std::uint8_t* data, std::size_t size);
+
+    // Writes every byte, giving up after `timeoutMs` in total. Returns false when the child
+    // has gone or did not take the bytes in time, so a host that stops reading its stdin
+    // cannot hold the caller for ever. A negative timeout waits without limit.
+    //
+    // POSIX: the write end is non-blocking and the call polls against a deadline. Windows:
+    // anonymous pipes have no timed write, so a write of more than kWatchdogBytes starts a
+    // watchdog thread that terminates the child at the deadline, which makes the blocked
+    // WriteFile fail. The watchdog is always joined before the call returns. After a timeout
+    // on Windows the child has been terminated; call kill() to release it as usual.
+    bool writeAllWithTimeout(const std::uint8_t* data, std::size_t size, int timeoutMs);
+
+    // Writes up to this many bytes are assumed to fit the pipe buffer and need no watchdog.
+    static constexpr std::size_t kWatchdogBytes = 32 * 1024;
 
     // Reads up to `size` bytes, waiting at most `timeoutMs`.
     // Returns the byte count (above 0), 0 on timeout, or -1 if the child has closed its output.

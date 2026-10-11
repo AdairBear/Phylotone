@@ -58,9 +58,11 @@ public:
     // blob to send on the worker before the next render. Only the newest blob is kept: one
     // that the worker has not picked up yet is replaced.
     void sendSamples(std::vector<std::uint8_t> blob);
-    // What the last sendSamples did, for the status line: "samples queued", "samples
-    // accepted", "samples refused: <reason>" (the host's answer), or "samples not sent:
-    // <reason>" (no host to answer). Empty until samples have been sent.
+    // What the samples did, for the status line: "samples queued", "samples accepted",
+    // "samples refused: <reason>" (the host's answer, or a set given up after the host failed
+    // on it twice) or "samples not sent: <reason>" (no host answered). It follows the host:
+    // when a restart sends the set again, the worker updates it with that outcome too, unless
+    // a newer blob is queued. Empty until samples have been sent.
     std::string samplesStatus() const;
     // Counts sendSamples calls the worker has finished with (accepted or not), so a caller
     // can tell when the status belongs to the blob it sent.
@@ -71,6 +73,9 @@ public:
 
 private:
     void work();
+    // Worker only. Refreshes samplesStatus_ when the supervisor has finished a samples exchange
+    // since the last call (in setSamples or in a re-send after a restart).
+    void publishSamplesOutcome();
 
     std::unique_ptr<PluginHostSupervisor> supervisor_;
 
@@ -100,5 +105,7 @@ private:
     std::string stateStatus_;
     std::string samplesStatus_;
     std::uint64_t samplesSeq_ = 0; // sendSamples calls so far; guarded by statusMutex_
+    std::uint64_t handledSeq_ = 0;          // number of the blob the worker took last; worker only
+    std::uint64_t publishedExchanges_ = 0;  // supervisor exchange count last published; worker only
     std::thread worker_;
 };

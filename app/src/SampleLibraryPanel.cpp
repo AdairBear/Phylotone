@@ -266,6 +266,15 @@ void SampleLibraryPanel::assignSelected()
     const bool same = e->slot == slot;
     const auto name = juce::String::fromUTF8(e->name.c_str());
 
+    // Whoever holds the slot now loses it. It stays in the library, and the message says so.
+    juce::String replaced;
+    for (const auto& other : session.library().entries())
+        if (other.slot == slot && other.file != file)
+        {
+            replaced = juce::String::fromUTF8(other.name.c_str());
+            break;
+        }
+
     const auto result = session.assign(file, slot);
     refresh();
     if (!result.ok)
@@ -273,7 +282,13 @@ void SampleLibraryPanel::assignSelected()
         report(juce::String::fromUTF8(result.message.c_str()));
         return;
     }
-    report(same ? name + " is already in slot " + juce::String(slot) : name + " is in slot " + juce::String(slot));
+    if (same)
+        report(name + " is already in slot " + juce::String(slot));
+    else if (replaced.isNotEmpty())
+        report(name + " is in slot " + juce::String(slot) + " (replaced " + replaced +
+               ", which stays in the library)");
+    else
+        report(name + " is in slot " + juce::String(slot));
     if (!same && onSlotsChanged)
         onSlotsChanged();
 }

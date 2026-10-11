@@ -7,13 +7,24 @@
 //
 // So the check can see what the host holds, every sample of every Process answer is
 //   (number of loaded slots) + 1000 if a non-blob state has been restored.
+//
+// Misbehaviour the check can ask for through environment variables (children inherit them):
+//   PHYLO_FAKE_DIE_ON_SLOTS=N    exit when a valid blob with N slots arrives
+//   PHYLO_FAKE_STALL_ON_SLOTS=N  stop answering when a valid blob with N slots arrives
+//   PHYLO_FAKE_NEVER_READ=1      send Hello, then never read anything again
+//   PHYLO_FAKE_EXTRA_RESULT=1    send one extra empty StateResult after each refusal
+//   PHYLO_FAKE_LONG_REASON=1     refuse a bad blob with a very long reason
+//   PHYLO_FAKE_REFUSE_STATE=1    refuse non-blob state bytes with "state not wanted"
 
 #include "phylo/host/Wire.h"
 #include "phylo/samples/SampleBlob.h"
 
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <string>
+#include <thread>
 #include <vector>
 
 #if defined(_WIN32)
@@ -33,6 +44,28 @@ void writeFrame(MsgType type, const std::vector<std::uint8_t>& payload)
     std::fwrite(bytes.data(), 1, bytes.size(), stdout);
     std::fflush(stdout);
 }
+
+// The number in an environment variable, or -1 when it is not set.
+long envNumber(const char* name)
+{
+#if defined(_WIN32)
+    char* value = nullptr;
+    std::size_t length = 0;
+    if (_dupenv_s(&value, &length, name) != 0 || value == nullptr)
+        return -1;
+    const long n = std::strtol(value, nullptr, 10);
+    std::free(value);
+    return n;
+#else
+    const char* value = std::getenv(name);
+    return value == nullptr ? -1 : std::strtol(value, nullptr, 10);
+#endif
+}
+
+void sleepFor(int seconds)
+{
+    std::this_thread::sleep_for(std::chrono::seconds(seconds));
+}
 } // namespace
 
 int main()
@@ -42,7 +75,19 @@ int main()
     _setmode(_fileno(stdout), _O_BINARY);
 #endif
 
+    const long dieOnSlots = envNumber("PHYLO_FAKE_DIE_ON_SLOTS");
+    const long stallOnSlots = envNumber("PHYLO_FAKE_STALL_ON_SLOTS");
+    const bool extraResult = envNumber("PHYLO_FAKE_EXTRA_RESULT") > 0;
+    const bool longReason = envNumber("PHYLO_FAKE_LONG_REASON") > 0;
+    const bool refuseState = envNumber("PHYLO_FAKE_REFUSE_STATE") > 0;
+
     writeFrame(MsgType::Hello, phylo::host::encodeHello(phylo::host::kProtocolVersion, 48000, 4096));
+
+    if (envNumber("PHYLO_FAKE_NEVER_READ") > 0)
+    {
+        sleepFor(120); // the app kills this process long before
+        return 0;
+    }
 
     phylo::samples::SampleSlotSet slots; // what the "plugin" holds
     bool stateRestored = false;
@@ -78,15 +123,41 @@ int main()
                     phylo::samples::SampleSlotSet decoded;
                     const auto result = phylo::samples::decodeSampleBlob(bytes.data(), bytes.size(), decoded);
                     if (result.ok())
+                    {
+                        const long count = static_cast<long>(decoded.size());
+                        if (count == dieOnSlots)
+                            return 3; // a blob that kills the host
+                        if (count == stallOnSlots)
+                        {
+                            sleepFor(120); // a blob that stalls it: no answer, the app gives up
+                            return 0;
+                        }
                         slots = std::move(decoded); // the blob replaces every slot
+                    }
                     else
+                    {
                         reason = result.message; // refused: the current slots stay
+                        if (longReason)
+                        {
+                            // One ASCII letter, then two-byte characters: byte 200 is the second half
+                            // of a character, so a cut there must move back.
+                            reason = "x";
+                            for (int i = 0; i < 400; ++i)
+                                reason += "\xc3\xa9";
+                        }
+                    }
+                }
+                else if (refuseState)
+                {
+                    reason = "state not wanted";
                 }
                 else
                 {
                     stateRestored = true;
                 }
                 writeFrame(MsgType::StateResult, phylo::host::encodeText(reason));
+                if (extraResult && !reason.empty())
+                    writeFrame(MsgType::StateResult, phylo::host::encodeText("")); // a stray "accepted"
                 break;
             }
             case MsgType::Process:

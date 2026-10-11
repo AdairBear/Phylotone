@@ -8,6 +8,16 @@
 
 using phylo::samples::LibraryResult;
 
+bool isKnownSampleFaultWord(const char* word)
+{
+    if (word == nullptr)
+        return false;
+    for (const char* known : {"header", "rate", "slot", "length", "truncated"})
+        if (std::strcmp(word, known) == 0)
+            return true;
+    return false;
+}
+
 SampleSession::SampleSession(std::string folder) : library_(std::move(folder)) {}
 
 LibraryResult SampleSession::open()
@@ -83,8 +93,10 @@ LibraryResult SampleSession::buildBlob(std::vector<std::uint8_t>& blob, int& slo
             kind = BlobFault::Truncated;
         else
             known = false; // an unknown word is ignored
-        if (known)
-            applyBlobFaultForTesting(blob, kind);
+        // Slot and length faults need a slot to damage. With none, damage the blob another way,
+        // so that a known fault word always sends a blob the host must refuse.
+        if (known && !applyBlobFaultForTesting(blob, kind))
+            applyBlobFaultForTesting(blob, BlobFault::Truncated);
     }
     return {};
 }

@@ -20,6 +20,10 @@
 // the host starts is left good, so there are accepted slots to keep playing.
 constexpr char kSampleFaultEnv[] = "PHYLO_SAMPLE_FAULT";
 
+// True for a word the hook recognises (header, rate, slot, length, truncated). Any other
+// word is ignored by buildBlob.
+bool isKnownSampleFaultWord(const char* word);
+
 class SampleSession
 {
 public:

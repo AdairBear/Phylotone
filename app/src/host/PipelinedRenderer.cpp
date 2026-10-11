@@ -109,6 +109,27 @@ std::size_t PipelinedRenderer::takenBlocks() const
     return taken_.load(std::memory_order_acquire);
 }
 
+void PipelinedRenderer::publishSamplesOutcome()
+{
+    const std::uint64_t exchanges = supervisor_->samplesExchangeCount();
+    if (exchanges == publishedExchanges_)
+        return;
+    publishedExchanges_ = exchanges;
+
+    // A refusal is the host's answer (or a set given up after the host failed on it). Anything
+    // else means the blob never got an answer.
+    const auto outcome = supervisor_->samplesOutcome();
+    std::string status = "samples accepted";
+    if (!outcome.accepted)
+        status = std::string(outcome.refused ? "samples refused: " : "samples not sent: ") + outcome.error;
+
+    // Only the newest blob writes the status. If another sendSamples came in after the one
+    // this worker last took, its "queued" stays until that blob is answered.
+    std::lock_guard<std::mutex> lock(statusMutex_);
+    if (handledSeq_ == samplesSeq_)
+        samplesStatus_ = status;
+}
+
 void PipelinedRenderer::work()
 {
     while (!stop_.load(std::memory_order_acquire))
@@ -123,23 +144,14 @@ void PipelinedRenderer::work()
             std::lock_guard<std::mutex> lock(statusMutex_);
             stateStatus_ = ok ? "plugin state restored" : "plugin state not accepted: " + supervisor_->lastError();
         }
+        publishSamplesOutcome(); // a start inside setState re-sends the samples
 
         if (PendingSamples* pending = pendingSamples_.exchange(nullptr, std::memory_order_acq_rel))
         {
             std::unique_ptr<PendingSamples> owned(pending);
-            const bool ok = supervisor_->setSamples(owned->blob);
-            // A refusal is the host's answer. Anything else means the blob never got an answer.
-            const bool hostUp = supervisor_->state() == PluginHostSupervisor::State::Running;
-            const std::string status = ok ? "samples accepted"
-                                          : (hostUp ? "samples refused: " : "samples not sent: ") +
-                                                supervisor_->lastSamplesError();
-            {
-                // Only the newest blob writes the status. If another sendSamples came in
-                // while this one was being sent, its "queued" stays until it is answered.
-                std::lock_guard<std::mutex> lock(statusMutex_);
-                if (owned->seq == samplesSeq_)
-                    samplesStatus_ = status;
-            }
+            handledSeq_ = owned->seq;
+            supervisor_->setSamples(owned->blob);
+            publishSamplesOutcome();
             samplesAnswered_.fetch_add(1, std::memory_order_acq_rel);
         }
 
@@ -159,6 +171,7 @@ void PipelinedRenderer::work()
 
         std::vector<float> result;
         supervisor_->render(request, result);
+        publishSamplesOutcome(); // a restart inside render re-sends the samples
 
         const std::size_t rHead = resultHead_.load(std::memory_order_acquire);
         const std::size_t rTail = resultTail_.load(std::memory_order_relaxed);

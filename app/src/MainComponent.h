@@ -9,6 +9,7 @@
 
 #include "phylo/Scene.h"
 
+#include <functional>
 #include <memory>
 #include <optional>
 
@@ -50,6 +51,29 @@ private:
     enum class SampleSend { hostStart, slotChange };
     void sendSamples(SampleSend why);
     void updateSamplesLine();
+
+    // A burst of slot changes (stepping a root note, assigning several samples) sends the set
+    // once, shortly after the last change, not once per change.
+    void scheduleSlotChangeSend();
+
+    // A one-shot timer that calls back on the message thread. Stopped when destroyed.
+    class SendDelay : private juce::Timer
+    {
+    public:
+        std::function<void()> onFire;
+        void restart(int delayMs) { startTimer(delayMs); }
+        bool pending() const { return isTimerRunning(); }
+        void cancel() { stopTimer(); }
+        ~SendDelay() override { stopTimer(); }
+
+    private:
+        void timerCallback() override
+        {
+            stopTimer();
+            if (onFire)
+                onFire();
+        }
+    };
 
     // Reads the scene file if it changed. On a parse error, keeps the current
     // scene and reports the first error.
@@ -96,6 +120,7 @@ private:
     juce::String lastSampleMessage; // the latest import / assign result
     juce::String sampleLineShown;
     juce::String sampleBuildError;  // why the last blob could not be built, empty when it could
+    SendDelay slotChangeDelay;      // declared last of the sample members: stopped first at teardown
 
     // Declared after the scene members and before the panel: the panel holds a
     // reference to the controller, so it must be destroyed first.
