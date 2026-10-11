@@ -72,37 +72,10 @@ bool isSafeFileName(const std::string& file)
     return !isReservedFileName(file);
 }
 
-// Stand-in for sanitiseSampleName (SampleBlob.h); the integrator swaps this for it.
+// Names are cleaned the same way the blob requires, so what is stored can always be sent.
 std::string cleanName(const std::string& name)
 {
-    std::string s;
-    s.reserve(name.size());
-    for (char c : name)
-    {
-        const unsigned char u = static_cast<unsigned char>(c);
-        if (u >= 0x20 && u != 0x7F)
-            s.push_back(c);
-    }
-
-    const auto trim = [](std::string& t) {
-        while (!t.empty() && t.back() == ' ')
-            t.pop_back();
-        std::size_t lead = 0;
-        while (lead < t.size() && t[lead] == ' ')
-            ++lead;
-        t.erase(0, lead);
-    };
-
-    trim(s);
-    if (s.size() > kMaxNameBytes)
-    {
-        std::size_t cut = kMaxNameBytes;
-        while (cut > 0 && (static_cast<unsigned char>(s[cut]) & 0xC0) == 0x80)
-            --cut;
-        s.resize(cut);
-        trim(s);
-    }
-    return s.empty() ? std::string("sample") : s;
+    return sanitiseSampleName(name);
 }
 
 // Windows refuses files named after old device names, whatever the extension.

@@ -234,6 +234,8 @@ BlobResult checkSampleBlob(const std::uint8_t* data, std::size_t size)
 {
     if (data == nullptr || size < kBlobHeaderBytes || std::memcmp(data, kBlobHeader, kBlobHeaderBytes) != 0)
         return refuse(BlobError::UnknownHeader, "unknown format header");
+    if (size > kMaxBlobBytes)
+        return setTooLarge(size);
     if (size < kBlobPreambleBytes)
         return refuse(BlobError::Truncated, "truncated blob");
 

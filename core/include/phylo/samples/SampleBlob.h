@@ -23,7 +23,7 @@
 // replacement, so a slot that is not in it is cleared. A blob with N = 0 clears every slot.
 //
 // The decoder checks, in this order, and refuses with the first problem it finds:
-// header, sample rate, slot count, then per slot: slot range, slot order, root note,
+// header, total size (over kMaxBlobBytes), sample rate, slot count, then per slot: slot range, slot order, root note,
 // channel count, name length, frame count (zero, then over the limit), truncation (name
 // and sample bytes present), name is UTF-8, samples are finite. Last: trailing bytes.
 #pragma once
