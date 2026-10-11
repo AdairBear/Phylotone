@@ -46,7 +46,9 @@ private:
     void loadPlaybackSettings();
 
     // Sample library: builds the slot blob and hands it to the plugin host. Message thread only.
-    void sendSamples();
+    // On a slot change the PHYLO_SAMPLE_FAULT test hook applies; on host start it does not.
+    enum class SampleSend { hostStart, slotChange };
+    void sendSamples(SampleSend why);
     void updateSamplesLine();
 
     // Reads the scene file if it changed. On a parse error, keeps the current
@@ -93,7 +95,6 @@ private:
     juce::String sampleOpenProblem; // the open failure or the first library warning
     juce::String lastSampleMessage; // the latest import / assign result
     juce::String sampleLineShown;
-    int slotsSent = -1;             // slots in the last blob handed to the renderer, -1 for none
     juce::String sampleBuildError;  // why the last blob could not be built, empty when it could
 
     // Declared after the scene members and before the panel: the panel holds a

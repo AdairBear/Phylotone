@@ -146,7 +146,7 @@ MainComponent::MainComponent()
         lastSampleMessage = text;
         updateSamplesLine();
     };
-    samplePanel.onSlotsChanged = [this] { sendSamples(); };
+    samplePanel.onSlotsChanged = [this] { sendSamples(SampleSend::slotChange); };
 
     const auto opened = sampleSession.open();
     if (!opened.ok)
@@ -240,7 +240,7 @@ void MainComponent::setPluginAudio(bool on)
 
         // Samples go second, after the state, and only when there is something to send.
         if (sampleSession.assignedSlots() > 0)
-            sendSamples();
+            sendSamples(SampleSend::hostStart);
     }
 
     const auto error = audio->open();
@@ -289,11 +289,16 @@ void MainComponent::filesDropped(const juce::StringArray& files, int, int)
     samplePanel.importFiles(files);
 }
 
-void MainComponent::sendSamples()
+void MainComponent::sendSamples(SampleSend why)
 {
+    // The test fault damages only the blobs sent for a slot change. The blob sent when the
+    // host starts stays good, so one run can show both halves of the check: a set that is
+    // accepted, then a bad one that is refused while the accepted slots keep playing.
+    const char* fault = why == SampleSend::slotChange ? std::getenv(kSampleFaultEnv) : nullptr;
+
     std::vector<std::uint8_t> blob;
     int slots = 0;
-    const auto built = sampleSession.buildBlob(blob, slots, std::getenv(kSampleFaultEnv));
+    const auto built = sampleSession.buildBlob(blob, slots, fault);
     if (!built.ok)
     {
         // Send nothing: the plugin keeps the slots it already has.
@@ -304,10 +309,7 @@ void MainComponent::sendSamples()
     sampleBuildError = {};
 
     if (renderer)
-    {
         renderer->sendSamples(std::move(blob));
-        slotsSent = slots;
-    }
     updateSamplesLine();
 }
 
@@ -331,7 +333,7 @@ void MainComponent::updateSamplesLine()
     }
 
     if (const char* fault = std::getenv(kSampleFaultEnv); fault != nullptr && fault[0] != '\0')
-        text += "  |  test fault: " + juce::String(fault);
+        text += "  |  test fault on slot changes: " + juce::String(fault);
     if (lastSampleMessage.isNotEmpty())
         text += "  |  " + lastSampleMessage;
 

@@ -15,8 +15,9 @@
 #include <vector>
 
 // Test hook for the refusal check (docs/HANDOFF.md 8.1). When this environment variable is
-// set to header, rate, slot, length or truncated, every blob the session builds is damaged
-// that way before it is sent, so the refusal can be seen on the status line.
+// set to header, rate, slot, length or truncated, the app damages the blob it sends for a
+// slot change that way, so the refusal can be seen on the status line. The blob sent when
+// the host starts is left good, so there are accepted slots to keep playing.
 constexpr char kSampleFaultEnv[] = "PHYLO_SAMPLE_FAULT";
 
 class SampleSession
