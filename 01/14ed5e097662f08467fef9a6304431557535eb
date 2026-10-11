@@ -1,0 +1,41 @@
+core/include/phylo/samples/SampleImport.h
+  s_8da52acdd1337e::t_1da558cb800210 39,71-81
+core/include/phylo/samples/SampleLibrary.h
+  s_8da52acdd1337e::t_c6731767829d35 10-19,24-26,114,120
+core/src/Wav.cpp
+  s_8da52acdd1337e::t_eabc927d12c0d4 80,100
+core/src/samples/SampleImport.cpp
+  s_8da52acdd1337e::t_d16c341ae8fa41 20-23,25-30,75-85,87-97,101,114,147,150-152,154,159-160,163-204,215-221,223-227,233,236,313
+tests/core/test_sample_blob.cpp
+  s_8da52acdd1337e::t_58af5c7adedffa 528-616
+tests/core/test_sample_import.cpp
+  s_8da52acdd1337e::t_ef8167663cf920 224-253,509-571,625,629-668,690,695-700
+tests/core/test_sample_library.cpp
+  s_8da52acdd1337e::t_aabaa82db2bdca 283-284,295-297,311-313,476-478,526-531,550-552,557-559,715-724,746-754,779-781,797-799,912-1502
+core/src/samples/SampleLibrary.cpp
+  s_f9f439b34b3926::t_5c6d27ff36a6ff 7-8,26,28-29,59-76,80,88-90,106-107,110,131,247-292,302,315-319,323-331,336-340,343-344,359-368,494,498-514,520,546-550,555-557,577-578,580-590,595,605,607-619,660-662,668-672,685-686,688,692-696,698-699,705
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0114ed5e097662f08467fef9a6304431557535eb",
+  "prompts": {},
+  "sessions": {
+    "s_8da52acdd1337e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aeaaba4f-8f90-45a0-8b53-f782f2cf3037",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Thomas Adair <34932535+AdairBear@users.noreply.github.com>"
+    },
+    "s_f9f439b34b3926": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-af4200f50730e659e",
+        "model": "unknown"
+      },
+      "human_author": "Thomas Adair <34932535+AdairBear@users.noreply.github.com>"
+    }
+  }
+}
