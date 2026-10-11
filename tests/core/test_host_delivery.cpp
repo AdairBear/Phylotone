@@ -424,6 +424,31 @@ TEST(preset_random_bytes_are_safe)
     }
 }
 
+TEST(preset_write_into_memory_matches_build)
+{
+    const Bytes comp = bytesOf("akazi.samples.v1 state");
+    Bytes built;
+    CHECK(buildVst3Preset(kClass, comp.data(), comp.size(), built).ok());
+    CHECK_EQ(vst3PresetSize(comp.size()), built.size());
+
+    Bytes into(vst3PresetSize(comp.size()), 0xEE);
+    CHECK(writeVst3Preset(kClass, comp.data(), comp.size(), into.data(), into.size()).ok());
+    CHECK(into == built);
+
+    // The wrong buffer size, a bad class ID and a too-large state are refused, nothing written.
+    Bytes tooSmall(into.size() - 1, 0xEE);
+    CHECK(!writeVst3Preset(kClass, comp.data(), comp.size(), tooSmall.data(), tooSmall.size()).ok());
+    CHECK(tooSmall[0] == 0xEE);
+    CHECK(writeVst3Preset("nope", comp.data(), comp.size(), into.data(), into.size()).code == PresetError::BadClassId);
+    CHECK_EQ(vst3PresetSize(kVst3MaxContainerBytes), 0u);
+    CHECK_EQ(vst3PresetSize(0), 48u + 28u);
+
+    // Empty state.
+    Bytes empty(vst3PresetSize(0));
+    CHECK(writeVst3Preset(kClass, nullptr, 0, empty.data(), empty.size()).ok());
+    CHECK(empty == valid(Bytes{}));
+}
+
 TEST(preset_build_refusals)
 {
     Bytes out;

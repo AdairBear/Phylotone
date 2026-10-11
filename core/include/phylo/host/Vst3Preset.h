@@ -90,4 +90,14 @@ PresetResult readVst3Chunk(const std::uint8_t* data, std::size_t size, const cha
 PresetResult buildVst3Preset(const std::string& classId, const std::uint8_t* comp, std::size_t compSize,
                              std::vector<std::uint8_t>& out);
 
+// Size of the container buildVst3Preset writes for a component state of `compSize` bytes, or
+// 0 when it would not fit kVst3MaxContainerBytes.
+std::size_t vst3PresetSize(std::size_t compSize) noexcept;
+
+// The same container, written straight into caller memory of exactly vst3PresetSize(compSize)
+// bytes, so a large state need not be built in a vector and copied. `comp` may be null only
+// when compSize is 0. `dest` and `comp` must not overlap.
+PresetResult writeVst3Preset(const std::string& classId, const std::uint8_t* comp, std::size_t compSize,
+                             std::uint8_t* dest, std::size_t destSize);
+
 } // namespace phylo::host

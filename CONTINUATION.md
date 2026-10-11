@@ -316,3 +316,32 @@ Decided (Thomas, 2026-10-11): root note per slot, one byte, default middle C; 60
   a speaker); Windows and Linux builds of the new host code (CI only); a plugin other than Akazi XL; the
   non-VST3 raw path (no such plugin here); the app UI wording beyond the existing status line
   (`samples refused: <reason>` shows the new refusal as is).
+- 2026-10-11: Sample delivery hardening on `feat/sample-delivery` (after an independent review of the host).
+  Memory: the host builds the preset container straight into the block it hands to the plugin
+  (`vst3PresetSize`, `writeVst3Preset`) and frees the frame's copy of the blob before the plugin decodes
+  it; `FrameDecoder` sizes its buffer for the one frame instead of doubling past it, and gives the memory
+  back once a large frame is out. Answer: the three attributes decide the answer, not the return value of
+  `setPreset`; when the plugin did not take a set, its state from before is put back. Queues: the host's
+  audio queue is bounded (32 requests), so the pipe pushes back on the app. Leaving: the host never
+  unwinds under its reader and audio threads; it releases the plugin and leaves through `_Exit`.
+  Found by the new leave check, and the reason an earlier session stopped here: with a plugin loaded, 20
+  Process frames and then a closed input, the host never exited. Its audio thread was stuck writing an
+  answer nobody read (a full pipe), holding the plugin lock, and the main thread waited for that lock for
+  ever. The audio thread now writes its answer after it lets go of the plugin lock, the host waits at
+  most 500 ms for the plugin in any case (`Host::kReleaseWaitMs`), skips the last flush when a writer is
+  stuck, and exits with code 0. The independent review found the same fault by reading and expected it to
+  fail on Windows first, where the pipe is 4 KiB. Known limit, not changed: if the app keeps the host's
+  output open without reading it and sends more than 32 blocks, the reader waits on the audio queue and
+  does not see the input close; the supervisor's kill covers that case.
+  Tests: ctest 14 of 14 without a plugin; 16 of 16 with `-DPHYLO_AKAZI_VST3` and `-DPHYLO_AKAZI_VST3_OLD`
+  (macOS arm64, Release, plugin from Akazi XL `feat/sample-slots`); the host and end-to-end checks passed
+  three runs in a row. New: `wire_decoder_gives_back_the_memory_of_a_large_frame`,
+  `preset_write_into_memory_matches_build`, and `checkHostLeavesCleanly` (45 rounds against the host with
+  no plugin in `phylo_sample_send`, 30 and 15 rounds with a plugin in the end-to-end check).
+  `ProcessPipe::closeInputAndWait` is new and has a Windows side that only CI has built.
+  Review notes kept open, not changed here: the 5 s state timeout (`kStateTimeoutMs`) also covers a
+  sample set (a full set took about 1.1 s end to end on this Mac; a much slower machine or a Debug plugin
+  could exceed it, and a longer timeout for sets is the fix); a set identical to the last one, sent again
+  after a delivery that failed without a trace, would be answered from the old attributes (a per-delivery
+  counter in v2 closes it); Process requests still queued when the input closes may be answered with
+  silence or not at all; the non-VST3 raw path cannot be reached in this build (only VST3 hosting is on).

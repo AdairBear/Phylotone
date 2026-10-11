@@ -55,6 +55,12 @@ public:
     // the next read or write fails. Used by the kill test.
     void killChildForTesting();
 
+    // Closes the child's input and waits up to `timeoutMs` for it to exit by itself. Returns
+    // its exit code; -1 if it did not exit in time (it is then killed); 1000 + n if a signal
+    // n ended it (a crash). Our read end stays open until the child has gone, so its last
+    // answers do not hit a closed pipe. Afterwards the pipe is no longer running.
+    int closeInputAndWait(int timeoutMs);
+
     bool running() const noexcept { return running_; }
 
 private:

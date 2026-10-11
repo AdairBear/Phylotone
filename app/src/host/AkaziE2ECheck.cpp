@@ -298,6 +298,78 @@ void checkPlainStateThenSet(const char* host, const char* plugin, bool expectSou
     pipe.kill();
 }
 
+// Leaving the host. Shutdown, then the input closing a few ms later, and frames in the same
+// write after Shutdown, must always end in a clean exit with code 0: the reader and audio
+// threads must never be left running on objects that are gone. Repeated, because the fault
+// this guards against was a race that lost only some of the time.
+void checkHostLeavesCleanly(const char* host, const char* plugin, int rounds)
+{
+    using phylo::host::MsgType;
+    int clean = 0;
+    for (int i = 0; i < rounds; ++i)
+    {
+        ProcessPipe pipe;
+        CHECK(pipe.start(host, {}));
+        phylo::host::FrameDecoder dec;
+        phylo::host::Frame f;
+        std::uint8_t chunk[4096];
+        const auto waitFor = [&](MsgType want)
+        {
+            const auto t0 = Clock::now();
+            while (msSince(t0) < 20000)
+            {
+                while (dec.next(f))
+                    if (f.type == want)
+                        return true;
+                const long n = pipe.readWithTimeout(chunk, sizeof chunk, 50);
+                if (n < 0)
+                    return false;
+                if (n > 0)
+                    dec.feed(chunk, static_cast<std::size_t>(n));
+            }
+            return false;
+        };
+        const auto bytesOf = [](MsgType t, const std::vector<std::uint8_t>& p) { return phylo::host::encodeFrame(t, p); };
+        CHECK(waitFor(MsgType::Hello));
+        if (plugin != nullptr && plugin[0] != 0)
+        {
+            const auto load = bytesOf(MsgType::Load, phylo::host::encodeText(plugin));
+            CHECK(pipe.writeAllWithTimeout(load.data(), load.size(), 20000));
+            CHECK(waitFor(MsgType::Loaded));
+        }
+
+        std::vector<std::uint8_t> out = bytesOf(MsgType::Shutdown, {});
+        const int kind = i % 3;
+        if (kind == 1)
+        {
+            // Frames after Shutdown in the same write: audio, a state request, a sample set.
+            const auto req = bytesOf(MsgType::Process, phylo::host::encodeProcess(blockWith({})));
+            const auto get = bytesOf(MsgType::GetState, {});
+            const auto set = bytesOf(MsgType::SetState, encode({sine(0, 440, 0.2)}));
+            for (const auto* extra : {&req, &req, &get, &set, &req})
+                out.insert(out.end(), extra->begin(), extra->end());
+        }
+        else if (kind == 2)
+        {
+            // Busy audio traffic, then the input just closes with no Shutdown at all. Nobody
+            // reads the answers, so the host's output pipe fills and its audio thread is
+            // stuck in a write, holding the plugin, when the host has to leave.
+            out.clear();
+            const auto req = bytesOf(MsgType::Process, phylo::host::encodeProcess(blockWith({})));
+            for (int k = 0; k < 20; ++k)
+                out.insert(out.end(), req.begin(), req.end());
+        }
+        CHECK(pipe.writeAllWithTimeout(out.data(), out.size(), 20000));
+        sleepMs(i % 5); // 0 to 4 ms: the window where the race lived
+        const int code = pipe.closeInputAndWait(10000);
+        if (code == 0)
+            ++clean;
+        else
+            std::printf("  round %d (kind %d): exit code %d\n", i, kind, code);
+    }
+    CHECK(clean == rounds);
+}
+
 void checkSound(const char* host, const char* plugin)
 {
     std::printf("sound: a set loads, plays, switches, refuses and clears\n");
@@ -480,11 +552,13 @@ int main(int argc, char** argv)
         checkSound(argv[1], argv[2]);
         checkPluginOwnRefusals(argv[1], argv[2]);
         checkPlainStateThenSet(argv[1], argv[2], true);
+        checkHostLeavesCleanly(argv[1], argv[2], 30);
     }
     else if (mode == "old")
     {
         checkOldPlugin(argv[1], argv[2]);
         checkPlainStateThenSet(argv[1], argv[2], false);
+        checkHostLeavesCleanly(argv[1], argv[2], 15);
     }
     else if (mode == "budget")
     {

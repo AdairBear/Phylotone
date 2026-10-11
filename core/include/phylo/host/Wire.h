@@ -56,6 +56,10 @@ public:
     bool failed() const noexcept { return failed_; }
     const std::string& error() const noexcept { return error_; }
 
+    // Bytes the internal buffer holds on to. Drops back to (nearly) nothing after a large
+    // frame has been taken. For tests.
+    std::size_t bufferCapacityForTesting() const noexcept { return buffer_.capacity(); }
+
 private:
     std::vector<std::uint8_t> buffer_;
     std::size_t offset_ = 0;

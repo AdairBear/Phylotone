@@ -27,18 +27,6 @@ std::uint64_t readU64(const std::uint8_t* p) noexcept
     return static_cast<std::uint64_t>(readU32(p)) | (static_cast<std::uint64_t>(readU32(p + 4)) << 32);
 }
 
-void putU32(std::vector<std::uint8_t>& v, std::uint32_t x)
-{
-    for (int i = 0; i < 4; ++i)
-        v.push_back(static_cast<std::uint8_t>((x >> (8 * i)) & 0xFFu));
-}
-
-void putU64(std::vector<std::uint8_t>& v, std::uint64_t x)
-{
-    for (int i = 0; i < 8; ++i)
-        v.push_back(static_cast<std::uint8_t>((x >> (8 * i)) & 0xFFu));
-}
-
 bool isHexDigit(unsigned char c) noexcept
 {
     return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
@@ -135,40 +123,75 @@ PresetResult readVst3Chunk(const std::uint8_t* data, std::size_t size, const cha
     return fail(PresetError::ChunkNotFound, "preset has no such chunk");
 }
 
-PresetResult buildVst3Preset(const std::string& classId, const std::uint8_t* comp, std::size_t compSize,
-                             std::vector<std::uint8_t>& out)
+std::size_t vst3PresetSize(std::size_t compSize) noexcept
 {
-    out.clear();
+    const std::uint64_t total = kVst3HeaderBytes + static_cast<std::uint64_t>(compSize) + kVst3ListHeaderBytes +
+                                kVst3ListEntryBytes;
+    return (static_cast<std::uint64_t>(compSize) > kVst3MaxContainerBytes || total > kVst3MaxContainerBytes)
+               ? 0
+               : static_cast<std::size_t>(total);
+}
+
+PresetResult writeVst3Preset(const std::string& classId, const std::uint8_t* comp, std::size_t compSize,
+                             std::uint8_t* dest, std::size_t destSize)
+{
     if (!validClassId(classId))
         return fail(PresetError::BadClassId, "preset class ID is not 32 hex digits");
     if (compSize > 0 && comp == nullptr)
         return fail(PresetError::BadChunkRange, "component state is missing");
-
-    const std::uint64_t listBytes = kVst3ListHeaderBytes + kVst3ListEntryBytes; // one entry
-    const std::uint64_t compBytes = compSize;
-    if (compBytes > kVst3MaxContainerBytes || kVst3HeaderBytes + compBytes + listBytes > kVst3MaxContainerBytes)
+    const std::size_t total = vst3PresetSize(compSize);
+    if (total == 0)
         return fail(PresetError::TooLarge, "component state is too large for a preset container");
+    if (dest == nullptr || destSize != total)
+        return fail(PresetError::TooLarge, "preset buffer has the wrong size");
 
-    const std::uint64_t listOffset = kVst3HeaderBytes + compBytes;
-    std::vector<std::uint8_t> v;
-    v.reserve(static_cast<std::size_t>(listOffset + listBytes));
+    const std::uint64_t listOffset = kVst3HeaderBytes + static_cast<std::uint64_t>(compSize);
+    std::uint8_t* p = dest;
+    const auto put32 = [&p](std::uint32_t x)
+    {
+        for (int i = 0; i < 4; ++i)
+            *p++ = static_cast<std::uint8_t>((x >> (8 * i)) & 0xFFu);
+    };
+    const auto put64 = [&p](std::uint64_t x)
+    {
+        for (int i = 0; i < 8; ++i)
+            *p++ = static_cast<std::uint8_t>((x >> (8 * i)) & 0xFFu);
+    };
+    const auto putId = [&p](const char* id)
+    {
+        std::memcpy(p, id, 4);
+        p += 4;
+    };
 
-    static const char magic[4] = {'V', 'S', 'T', '3'};
-    v.insert(v.end(), magic, magic + 4);
-    putU32(v, static_cast<std::uint32_t>(kVst3FormatVersion));
-    v.insert(v.end(), classId.begin(), classId.end());
-    putU64(v, listOffset);
+    putId("VST3");
+    put32(static_cast<std::uint32_t>(kVst3FormatVersion));
+    std::memcpy(p, classId.data(), kVst3ClassIdChars);
+    p += kVst3ClassIdChars;
+    put64(listOffset);
     if (compSize > 0)
-        v.insert(v.end(), comp, comp + compSize);
+    {
+        std::memcpy(p, comp, compSize);
+        p += compSize;
+    }
+    putId("List");
+    put32(1);
+    putId("Comp");
+    put64(kVst3HeaderBytes);
+    put64(compSize);
+    return {};
+}
 
-    static const char list[4] = {'L', 'i', 's', 't'};
-    static const char compId[4] = {'C', 'o', 'm', 'p'};
-    v.insert(v.end(), list, list + 4);
-    putU32(v, 1);
-    v.insert(v.end(), compId, compId + 4);
-    putU64(v, kVst3HeaderBytes);
-    putU64(v, compBytes);
-
+PresetResult buildVst3Preset(const std::string& classId, const std::uint8_t* comp, std::size_t compSize,
+                             std::vector<std::uint8_t>& out)
+{
+    out.clear();
+    const std::size_t total = vst3PresetSize(compSize);
+    if (total == 0 && validClassId(classId))
+        return fail(PresetError::TooLarge, "component state is too large for a preset container");
+    std::vector<std::uint8_t> v(total);
+    const PresetResult r = writeVst3Preset(classId, comp, compSize, v.data(), v.size());
+    if (!r.ok())
+        return r;
     out = std::move(v);
     return {};
 }
