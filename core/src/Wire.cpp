@@ -57,11 +57,25 @@ std::vector<std::uint8_t> encodeFrame(MsgType type, const std::vector<std::uint8
     return out;
 }
 
+namespace
+{
+constexpr std::size_t kKeepBufferBytes = 1u << 20; // above this, an emptied buffer is released
+}
+
 void FrameDecoder::feed(const std::uint8_t* data, std::size_t size)
 {
     if (failed_ || size == 0)
         return;
     buffer_.insert(buffer_.end(), data, data + size);
+    // Once the header of the frame being collected is here, size the buffer for the whole
+    // frame. Growing by doubling would reserve up to twice a 64 MiB frame.
+    if (buffer_.size() - offset_ >= 5)
+    {
+        const std::uint32_t length = getU32(buffer_.data() + offset_);
+        const std::size_t want = offset_ + 5 + static_cast<std::size_t>(length);
+        if (length <= kMaxPayloadBytes && want > buffer_.capacity())
+            buffer_.reserve(want);
+    }
 }
 
 bool FrameDecoder::next(Frame& out)
@@ -102,6 +116,14 @@ bool FrameDecoder::next(Frame& out)
     const auto begin = buffer_.begin() + static_cast<std::ptrdiff_t>(offset_ + 5);
     out.payload.assign(begin, begin + static_cast<std::ptrdiff_t>(length));
     offset_ += 5 + length;
+
+    // A large frame leaves a large buffer behind. When everything has been consumed, give
+    // the memory back instead of holding up to 64 MiB for the life of the process.
+    if (offset_ == buffer_.size() && buffer_.capacity() > kKeepBufferBytes)
+    {
+        std::vector<std::uint8_t>().swap(buffer_);
+        offset_ = 0;
+    }
     return true;
 }
 

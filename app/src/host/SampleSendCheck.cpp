@@ -18,13 +18,17 @@
 //  - PipelinedRenderer sends blobs without ever holding up submit() or take(), and its status
 //    follows what the host did, also when a restart sends the set again.
 // Against the real phylo-plughost with no plugin loaded it checks that a bad blob gets its
-// own reason, and a good one is refused because no plugin is loaded.
+// own reason, and a good one is refused because no plugin is loaded (an empty answer would
+// now mean "the plugin loaded it", which cannot happen without a plugin). With the host's
+// test hook PHYLO_HOST_SKIP_BLOB_CHECK=1 a bad blob gets past the host's own check and meets
+// the missing plugin too.
 //
 // The fake host misbehaves on request through environment variables (see FakeSampleHost.cpp).
 // The check sets them in its own process before it starts a supervisor; children inherit them.
 
 #include "PipelinedRenderer.h"
 #include "PluginHostSupervisor.h"
+#include "ProcessPipe.h"
 #include "phylo/samples/SampleBlob.h"
 
 #include <algorithm>
@@ -678,6 +682,81 @@ void checkSendFromAnotherThread(const char* fakeHost)
     CHECK(renderer.samplesStatus() == "samples accepted");
 }
 
+// Leaving the host. Shutdown, then the input closing a few ms later, and frames in the same
+// write after Shutdown, must always end in a clean exit with code 0: the reader and audio
+// threads must never be left running on objects that are gone. Repeated, because the fault
+// this guards against was a race that lost only some of the time.
+void checkHostLeavesCleanly(const char* host, const char* plugin, int rounds)
+{
+    using phylo::host::MsgType;
+    int clean = 0;
+    for (int i = 0; i < rounds; ++i)
+    {
+        ProcessPipe pipe;
+        CHECK(pipe.start(host, {}));
+        phylo::host::FrameDecoder dec;
+        phylo::host::Frame f;
+        std::uint8_t chunk[4096];
+        const auto waitFor = [&](MsgType want)
+        {
+            const auto t0 = Clock::now();
+            while (msSince(t0) < 20000)
+            {
+                while (dec.next(f))
+                    if (f.type == want)
+                        return true;
+                const long n = pipe.readWithTimeout(chunk, sizeof chunk, 50);
+                if (n < 0)
+                    return false;
+                if (n > 0)
+                    dec.feed(chunk, static_cast<std::size_t>(n));
+            }
+            return false;
+        };
+        const auto bytesOf = [](MsgType t, const std::vector<std::uint8_t>& p) { return phylo::host::encodeFrame(t, p); };
+        CHECK(waitFor(MsgType::Hello));
+        if (plugin != nullptr && plugin[0] != 0)
+        {
+            const auto load = bytesOf(MsgType::Load, phylo::host::encodeText(plugin));
+            CHECK(pipe.writeAllWithTimeout(load.data(), load.size(), 20000));
+            CHECK(waitFor(MsgType::Loaded));
+        }
+
+        std::vector<std::uint8_t> out = bytesOf(MsgType::Shutdown, {});
+        const int kind = i % 3;
+        if (kind == 1)
+        {
+            // Frames after Shutdown in the same write: audio, a state request, a sample set.
+            const auto req = bytesOf(MsgType::Process, phylo::host::encodeProcess(block()));
+            const auto get = bytesOf(MsgType::GetState, {});
+            const auto set = bytesOf(MsgType::SetState, makeBlob({0}));
+            for (const auto* extra : {&req, &req, &get, &set, &req})
+                out.insert(out.end(), extra->begin(), extra->end());
+        }
+        else if (kind == 2)
+        {
+            // Busy audio traffic, then the input just closes with no Shutdown at all. The
+            // blocks are large and nobody reads the answers, so the host's output pipe fills
+            // and its audio thread is stuck in a write when the host has to leave.
+            out.clear();
+            phylo::host::ProcessRequest big = block();
+            big.frames = 2048;
+            big.audio.assign(static_cast<std::size_t>(big.frames) * kChannels, 0.0f);
+            const auto req = bytesOf(MsgType::Process, phylo::host::encodeProcess(big));
+            for (int k = 0; k < 20; ++k)
+                out.insert(out.end(), req.begin(), req.end());
+        }
+        CHECK(pipe.writeAllWithTimeout(out.data(), out.size(), 20000));
+        sleepMs(i % 5); // 0 to 4 ms: the window where the race lived
+        const int code = pipe.closeInputAndWait(10000);
+        if (code == 0)
+            ++clean;
+        else
+            std::printf("  round %d (kind %d): exit code %d\n", i, kind, code);
+    }
+    CHECK(clean == rounds);
+}
+
 void checkRealHost(const char* realHost)
 {
     PluginHostSupervisor sup(realHost, ""); // no plugin loaded
@@ -708,6 +787,37 @@ void checkRealHost(const char* realHost)
         silent = silent && f == 0.0f;
     CHECK(silent);
     CHECK(sup.state() == PluginHostSupervisor::State::Running);
+
+    // Plain plugin state (not a sample blob) keeps its own path: no plugin, so it is refused
+    // for that reason, never with a sample-set wording.
+    CHECK(!sup.setState({'<', 'x', '/', '>'}));
+    CHECK(contains(sup.lastError(), "no plugin loaded"));
+}
+
+// The test hook: the host does not check the blob itself, so a bad blob is not refused for
+// its fault but passes on, and with no plugin loaded meets "no plugin loaded". Without the
+// hook (the default) the same blob is refused for its fault.
+void checkSkipBlobCheckHook(const char* realHost)
+{
+    {
+        EnvGuard skip("PHYLO_HOST_SKIP_BLOB_CHECK", "1");
+        PluginHostSupervisor sup(realHost, "");
+        std::vector<float> out;
+        sup.render(block(), out);
+        CHECK(sup.state() == PluginHostSupervisor::State::Running);
+        CHECK(!sup.setSamples(faulty({0}, BlobFault::SlotOutOfRange)));
+        CHECK(contains(sup.lastSamplesError(), "no plugin loaded"));
+        CHECK(!contains(sup.lastSamplesError(), "out of range"));
+        CHECK(sup.state() == PluginHostSupervisor::State::Running);
+    }
+    {
+        EnvGuard skip("PHYLO_HOST_SKIP_BLOB_CHECK", "0"); // only "1" turns it on
+        PluginHostSupervisor sup(realHost, "");
+        std::vector<float> out;
+        sup.render(block(), out);
+        CHECK(!sup.setSamples(faulty({0}, BlobFault::SlotOutOfRange)));
+        CHECK(contains(sup.lastSamplesError(), "out of range"));
+    }
 }
 } // namespace
 
@@ -743,6 +853,8 @@ int main(int argc, char** argv)
     checkRendererStatusAfterRestart(argv[1]);
     checkSendFromAnotherThread(argv[1]);
     checkRealHost(argv[2]);
+    checkSkipBlobCheckHook(argv[2]);
+    checkHostLeavesCleanly(argv[2], "", 45);
 
     std::printf("sample send check: %d checks, %d failed\n", checks, failures);
     return failures == 0 ? 0 : 1;

@@ -184,6 +184,24 @@ void ProcessPipe::killChildForTesting()
     WaitForSingleObject(process_, 5000);
 }
 
+int ProcessPipe::closeInputAndWait(int timeoutMs)
+{
+    if (!running_)
+        return -1;
+    if (toChild_ != nullptr)
+        CloseHandle(toChild_);
+    toChild_ = nullptr;
+    int result = -1;
+    if (WaitForSingleObject(process_, static_cast<DWORD>(timeoutMs)) == WAIT_OBJECT_0)
+    {
+        DWORD code = 0;
+        if (GetExitCodeProcess(process_, &code))
+            result = static_cast<int>(code);
+    }
+    kill(); // closes the rest; the process has gone, or is stopped now
+    return result;
+}
+
 void ProcessPipe::kill()
 {
     if (!running_)
@@ -364,6 +382,37 @@ void ProcessPipe::killChildForTesting()
     {
     }
     // Reaped, but the pipe ends stay open. The next read sees end of file.
+}
+
+int ProcessPipe::closeInputAndWait(int timeoutMs)
+{
+    if (!running_)
+        return -1;
+    close(toChild_);
+    toChild_ = -1;
+    int result = -1;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+    for (;;)
+    {
+        int status = 0;
+        const pid_t r = waitpid(pid_, &status, WNOHANG);
+        if (r == pid_)
+        {
+            result = WIFEXITED(status) ? WEXITSTATUS(status) : 1000 + (WIFSIGNALED(status) ? WTERMSIG(status) : 0);
+            close(fromChild_);
+            fromChild_ = -1;
+            pid_ = -1;
+            running_ = false;
+            return result;
+        }
+        if (r < 0 && errno != EINTR)
+            break;
+        if (std::chrono::steady_clock::now() >= deadline)
+            break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    kill();
+    return -1;
 }
 
 void ProcessPipe::kill()

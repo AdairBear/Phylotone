@@ -13,6 +13,8 @@ add_library(phylo_core STATIC
     core/src/Assistant.cpp
     core/src/Generator.cpp
     core/src/Wire.cpp
+    core/src/Fnv1a.cpp
+    core/src/Vst3Preset.cpp
     core/src/Mixer.cpp
     core/src/Wav.cpp
     core/src/samples/SampleBlob.cpp
@@ -44,7 +46,7 @@ if(PHYLO_BUILD_TESTS)
 
     # Sample library (docs/SAMPLE_INTERFACE.md): the blob codec, WAV import and the library
     # folder. One program each, sharing the runner in tests/core/check.h.
-    foreach(suite sample_blob sample_import sample_library)
+    foreach(suite sample_blob sample_import sample_library host_delivery)
         add_executable(phylo_${suite}_tests tests/core/test_${suite}.cpp)
         target_link_libraries(phylo_${suite}_tests PRIVATE phylo_core)
         target_compile_options(phylo_${suite}_tests PRIVATE

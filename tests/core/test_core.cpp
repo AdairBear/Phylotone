@@ -1480,6 +1480,37 @@ TEST(wire_oversize_length_is_refused_before_allocating)
     CHECK(!dec.error().empty());
 }
 
+TEST(wire_decoder_gives_back_the_memory_of_a_large_frame)
+{
+    // A 32 MiB frame fed in 64 KiB pieces, as the host's reader does.
+    const std::size_t n = 32u * 1024u * 1024u;
+    const std::vector<std::uint8_t> payload(n, 0x5A);
+    const auto bytes = phylo::host::encodeFrame(phylo::host::MsgType::SetState, payload);
+
+    phylo::host::FrameDecoder dec;
+    phylo::host::Frame f;
+    std::size_t peak = 0;
+    for (std::size_t at = 0; at < bytes.size(); at += 65536)
+    {
+        const std::size_t len = std::min<std::size_t>(65536, bytes.size() - at);
+        dec.feed(bytes.data() + at, len);
+        peak = std::max(peak, dec.bufferCapacityForTesting());
+    }
+    CHECK(dec.next(f));
+    CHECK(f.payload.size() == n);
+    // Sized for the one frame, not doubled past it.
+    CHECK(peak <= bytes.size() + 65536);
+    // Nothing is held back once the frame is out.
+    CHECK(dec.bufferCapacityForTesting() <= 1024u * 1024u);
+
+    // And the decoder still works afterwards.
+    const auto small = phylo::host::encodeFrame(phylo::host::MsgType::GetState, {});
+    dec.feed(small.data(), small.size());
+    CHECK(dec.next(f));
+    CHECK(f.type == phylo::host::MsgType::GetState);
+    CHECK(!dec.failed());
+}
+
 TEST(wire_unknown_type_fails_the_stream)
 {
     const std::vector<std::uint8_t> bad = {0x00, 0x00, 0x00, 0x00, 0x99};

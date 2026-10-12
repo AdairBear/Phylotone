@@ -1,6 +1,6 @@
 # Phylotone: continuation brief
 
-*For any session picking up this project. Last updated 2026-10-10.*
+*For any session picking up this project. Last updated 2026-10-11.*
 
 **Start with `docs/HANDOFF.md`.** It is the current status and the ordered next work. The "Next" list below is kept for the log, but `docs/HANDOFF.md` section 8 is the plan.
 
@@ -267,3 +267,87 @@ Decided (Thomas, 2026-10-11): root note per slot, one byte, default middle C; 60
   own refusal, and the delivery path is fixed and agreed on both sides. That work is on its own
   branches and pull requests. PR #27 is not merged; merging needs Thomas's "Merge". The audible check
   is planned for 2026-10-12.
+- 2026-10-11: Sample delivery, Phylotone side, on `feat/sample-delivery` (cut from `feat/sample-library`, PR
+  #27; not pushed, no PR). Built from the agreed design (Akazi XL side is a separate repo and branch).
+  `docs/SAMPLE_INTERFACE.md` is now v1.0, agreed on both sides.
+  **Contract change, and why: an empty StateResult for a sample set used to mean "the host accepted the
+  blob"; it now means "the plugin loaded it".** Two things forced this. (1) A raw blob never reached a
+  VST3 plugin: JUCE's VST3 host drops bytes that are not its own XML wrapper in `setStateInformation`.
+  The host now gives the blob to the plugin as the VST3 component state, through a preset container
+  (`ExtensionsVisitor::VST3Client::getPreset/setPreset`). (2) `setStateInformation` returns nothing, so
+  the plugin could not refuse. The plugin now records `sampleSetBytes`, `sampleSetHash` (FNV-1a 64) and
+  `sampleSetResult` in its state XML, and the host reads them back and answers StateResult from them. A
+  plugin that did not record this exact blob (an older Akazi XL, any other plugin) is answered `the plugin
+  did not take the sample set`. Because the host can now ask the plugin, an empty answer could be made
+  honest. `docs/CONTRACT.md` is not changed.
+  Built: `phylo/host/Vst3Preset.h` (hostile-input container reader and builder, JUCE-free) and
+  `phylo/host/Fnv1a.h` in the core; `phylo-plughost` delivery and readback (VST3 via the client
+  extension, other formats raw); host test hook `PHYLO_HOST_SKIP_BLOB_CHECK=1` (a bad blob reaches the
+  plugin so the plugin's own refusal can be seen; documented next to `PHYLO_SAMPLE_FAULT` in
+  `app/src/SampleSession.h` and in `docs/SAMPLE_INTERFACE.md`; it is read by the host, so set it where the
+  host starts); `FakeSampleHost` now documents
+  that its empty answer means "loaded"; `phylo_sample_send` gained the hook check and a plain-state check
+  against the real host with no plugin.
+  Found against the real plugin, not in the design: the host ran Process on the same thread that reads
+  input and (needed for the plugin's timers) runs the message loop. A Program Change makes Akazi XL build
+  the new slot's sample from a message-thread timer; with a 60 s sample that took about 0.8 s, the host did
+  not read the next Process meanwhile, the supervisor's 250 ms reply timeout killed and restarted the host,
+  and the slot switch was lost. Without the message loop pumped at all, Program Change never took effect
+  (seen: 41 polls, 1.3 s, no switch). The host now has three threads: a reader that splits frames (Process
+  goes straight to the audio queue), the main thread (message loop, state calls), and an audio thread.
+  The supervisor's timeouts are unchanged.
+  Tests: core `phylo_host_delivery` (16 tests: FNV vectors, container round trip and exact layout, an
+  SDK-style container, every truncation, header, list-offset, count and chunk-range faults including
+  64-bit wrap cases, every single-byte change, random bytes, a 64 MiB chunk) and the existing suites,
+  all passing, also under ASan and UBSan (core only, separate build). ctest has 14 entries (13 before plus
+  `phylo_host_delivery`); with `-DPHYLO_AKAZI_VST3=<bundle>` it adds `phylo_akazi_e2e` (and
+  `phylo_akazi_e2e_budget` with `-DPHYLO_AKAZI_BUDGET=ON`; `-DPHYLO_AKAZI_VST3_OLD=<bundle>` adds
+  `phylo_akazi_e2e_old` for a build without sample-set support). CI has no plugin, so none is registered
+  there.
+  End-to-end result (macOS arm64, Release, plugin built from Akazi XL `sample-slots`, 2026-10-11): `sound`
+  mode 82 checks, 0 failed: silent before a set, empty answer then the sample at its pitch (about 438 Hz
+  for a 440 Hz sine at root 60), Program Change 1 took effect after 41 to 69 ms of wall time, host
+  refusal (slot 128) leaves the sample playing, the plugin's own five refusal reasons come back with
+  `PHYLO_HOST_SKIP_BLOB_CHECK=1` and the sample keeps playing, a set with no slots silences it, plain XML
+  state round-trips and a set after it is answered. Full budget (62 784 122 bytes, 59.9 MiB): delivered in
+  about 1.1 s, host peak memory about 535 MiB, switch to a 27 s slot about 0.4 s. The older Akazi XL build
+  gets `the plugin did not take the sample set` (`old` mode, 32 checks, 0 failed).
+  Not verified: anything audible through a device (the check listens to the host's rendered audio, not to
+  a speaker); Windows and Linux builds of the new host code (CI only); a plugin other than Akazi XL; the
+  non-VST3 raw path (no such plugin here); the app UI wording beyond the existing status line
+  (`samples refused: <reason>` shows the new refusal as is).
+- 2026-10-11: Sample delivery hardening on `feat/sample-delivery` (after an independent review of the host).
+  Memory: the host builds the preset container straight into the block it hands to the plugin
+  (`vst3PresetSize`, `writeVst3Preset`) and frees the frame's copy of the blob before the plugin decodes
+  it; `FrameDecoder` sizes its buffer for the one frame instead of doubling past it, and gives the memory
+  back once a large frame is out. Answer: the three attributes decide the answer, not the return value of
+  `setPreset`; when the plugin did not take a set, its state from before is put back. Queues: the host's
+  audio queue is bounded (32 requests), so the pipe pushes back on the app. Leaving: the host never
+  unwinds under its reader and audio threads; it releases the plugin and leaves through `_Exit`.
+  Found by the new leave check, and the reason an earlier session stopped here: with a plugin loaded, 20
+  Process frames and then a closed input, the host never exited. Its audio thread was stuck writing an
+  answer nobody read (a full pipe), holding the plugin lock, and the main thread waited for that lock for
+  ever. The audio thread now writes its answer after it lets go of the plugin lock, the host waits at
+  most 500 ms for the plugin in any case (`Host::kReleaseWaitMs`), skips the last flush when a writer is
+  stuck, and exits with code 0. The independent review found the same fault by reading and expected it to
+  fail on Windows first, where the pipe is 4 KiB. Known limit, not changed: if the app keeps the host's
+  output open without reading it and sends more than 32 blocks, the reader waits on the audio queue and
+  does not see the input close; the supervisor's kill covers that case.
+  Tests: ctest 14 of 14 without a plugin; 16 of 16 with `-DPHYLO_AKAZI_VST3` and `-DPHYLO_AKAZI_VST3_OLD`
+  (macOS arm64, Release, plugin from Akazi XL `feat/sample-slots`); the host and end-to-end checks passed
+  three runs in a row. New: `wire_decoder_gives_back_the_memory_of_a_large_frame`,
+  `preset_write_into_memory_matches_build`, and `checkHostLeavesCleanly` (45 rounds against the host with
+  no plugin in `phylo_sample_send`, 30 and 15 rounds with a plugin in the end-to-end check).
+  `ProcessPipe::closeInputAndWait` is new and has a Windows side that only CI has built.
+  Review notes kept open, not changed here: the 5 s state timeout (`kStateTimeoutMs`) also covers a
+  sample set (a full set took about 1.1 s end to end on this Mac; a much slower machine or a Debug plugin
+  could exceed it, and a longer timeout for sets is the fix); a set identical to the last one, sent again
+  after a delivery that failed without a trace, would be answered from the old attributes (a per-delivery
+  counter in v2 closes it); Process requests still queued when the input closes may be answered with
+  silence or not at all; the non-VST3 raw path cannot be reached in this build (only VST3 hosting is on).
+- 2026-10-11: Decisions from Thomas for Akazi XL, noted here because they touch the interface. Slot
+  mapping: yes to one sample per key for drums, with the current single sample kept as slot 0. It is not
+  built; v1 still plays one active slot, and `docs/SAMPLE_INTERFACE.md` still lists per-note mapping as
+  not in v1. The key-to-slot rule is to be settled before either side builds it. Akazi XL `main` now has
+  its v2.5 work (PRs #11 and #12, merged on his "Merge both"); `feat/sample-slots` (PR #13) was rebased
+  onto it and the Sample Slot parameter is now version 6. Re-run against that build: ctest 16 of 16.
