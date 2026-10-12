@@ -345,3 +345,9 @@ Decided (Thomas, 2026-10-11): root note per slot, one byte, default middle C; 60
   after a delivery that failed without a trace, would be answered from the old attributes (a per-delivery
   counter in v2 closes it); Process requests still queued when the input closes may be answered with
   silence or not at all; the non-VST3 raw path cannot be reached in this build (only VST3 hosting is on).
+- 2026-10-11: Decisions from Thomas for Akazi XL, noted here because they touch the interface. Slot
+  mapping: yes to one sample per key for drums, with the current single sample kept as slot 0. It is not
+  built; v1 still plays one active slot, and `docs/SAMPLE_INTERFACE.md` still lists per-note mapping as
+  not in v1. The key-to-slot rule is to be settled before either side builds it. Akazi XL `main` now has
+  its v2.5 work (PRs #11 and #12, merged on his "Merge both"); `feat/sample-slots` (PR #13) was rebased
+  onto it and the Sample Slot parameter is now version 6. Re-run against that build: ctest 16 of 16.
