@@ -73,6 +73,8 @@
 - Open decisions are listed at the end of CONTRACT.md.
 
 ## Next (as of 2026-10-10; full plan in docs/HANDOFF.md section 8)
+Step 1 is built on `feat/sample-library` (see the session log). Its audible check and the open decisions
+are with Thomas.
 1. Phylotone sample library on a new branch from `kickoff/contract`: `Documents/Phylotone/samples`, index,
    WAV import (convert to 48 kHz float, refuse over 60 s), slot assignment, and the `akazi.samples.v1`
    blob sent over SetState (`docs/SAMPLE_INTERFACE.md`). Headless check for the blob codec and refusals.
@@ -82,10 +84,10 @@
 4. M4 audio-thread leftovers: `buildBlock` allocates a request each block; `AudioFeed::pull` grows its
    `ready_` deque; a replaced pattern's note storage is freed on the audio thread.
 5. M5 app side (levels, pan, master bus, record in the UI) on the same output.
-6. Akazi XL change list for the sample blob. Separate repo; needs Thomas's go-ahead before anyone touches it.
+6. Akazi XL change list for the sample blob. Separate repo. Thomas gave the go-ahead on 2026-10-11.
 
-Open decisions (Thomas): root note per slot (proposed: optional, default middle C); 60 s memory budget;
-whether StateResult reports loaded slots (proposed: v2).
+Decided (Thomas, 2026-10-11): root note per slot, one byte, default middle C; 60 s per sample and a
+64 MiB set; StateResult does not report loaded slots in v1 (v2).
 
 ## Working rules
 - New work goes on a branch with a pull request. Thomas reviews and merges.
@@ -196,3 +198,72 @@ whether StateResult reports loaded slots (proposed: v2).
 - 2026-10-09: PR #22 (lock-free control) merged on Thomas's go-ahead.
 - 2026-10-09: M4 audio thread on `m4-audio-thread`: `PipelinedRenderer` has no mutex now. Each direction is an SPSC ring of 4 (caller submits and takes; the worker renders). The worker polls every 1 ms when idle. Results dropped when their ring is full are counted as dropped, so the taken + dropped invariant holds. `AudioFeed` tempo, meter and rate are read only when a serial changes (no double compares). `phylo_renderer_check` passes 20 of 20 runs; the renderer and feed checks pass under ThreadSanitizer with no reports. ctest 8/8. Not verified: sound through a device.
 - 2026-10-09: M4 plugin state on `m4-plugin-state` (stacked on `m4-audio-thread`). Plugin audio had no sample: nothing set the plugin state. `playback.txt` now takes `state=<file>` (raw state bytes). The renderer restores it on the worker thread before the first render (`PipelinedRenderer::restoreState`); the supervisor keeps the bytes and sends them again after every host start, so a crash and restart keeps the sound. Status line shows "plugin state restored" or the refusal. Checks: `phylo_playback_settings` (state key), `phylo_supervisor_kill` (state refused with no plugin, and re-sent after a restart); ctest 8/8; renderer check under ThreadSanitizer, no reports. Not verified: sound. The Akazi XL plugin is not on this machine, so no state was run through a real plugin here.
+- 2026-10-10: Sample library (handoff 8.1) on `feat/sample-library`, from `kickoff/contract`.
+  Core (JUCE-free, `phylo_core`): `SampleBlob.h` holds the `akazi.samples.v1` codec (encoder, decoder,
+  checker, name sanitiser, and a test hook that damages a blob). `SampleImport.h` reads WAV at 16-bit,
+  24-bit or 32-bit float, mono or stereo, 8 kHz to 192 kHz, and converts to 48 kHz float with a
+  Kaiser-windowed sinc resampler. A file longer than 60 s is refused from its header before decoding.
+  `SampleLibrary.h` keeps one 48 kHz float WAV per sample in `Documents/Phylotone/samples`, and
+  `index.txt` holds file, slot, root note and name. The library is copy-in only. It never deletes or
+  overwrites a sample file. The index is written to a temp file and renamed. A damaged index is backed
+  up to `index.txt.bad` under a name not already taken. An index from a newer version is left alone.
+  App: `SampleSession` (JUCE-free glue for import, assign, clear, root note and the blob) and
+  `SampleLibraryPanel` (list, Import WAV, slot box, Assign, Clear slot, Root box). A WAV dropped on the
+  window is imported. `MainComponent` sends the blob at host start, after the stopgap state, and after
+  each slot change (debounced about 300 ms). A samples line shows "samples accepted",
+  "samples refused: <reason>" or "samples not sent: <reason>".
+  Host path: `PluginHostSupervisor::setSamples` keeps the wanted set and the last accepted set apart
+  from the `state=` stopgap bytes. Both are sent again after every host start, state first. A refusal
+  keeps the accepted set in force, including after a crash and restart. A set that breaks the host gets
+  one more try, then is given up and the accepted set is restored. `PipelinedRenderer::sendSamples`
+  hands the blob to the worker thread. Nothing was added to the audio path. `phylo-plughost` checks a
+  blob with the core decoder and answers the refusal reason itself, before the plugin sees it.
+  `ProcessPipe` writes now have a timeout, so a host that stops reading cannot hang the worker or app
+  quit. The Windows side of this (a watchdog that ends the child) was not run locally. CI builds and
+  runs it.
+  Wire change: `kMaxPayloadBytes` went from 16 MiB to 64 MiB, because one 60 s stereo sample is about
+  23 MB and the set travels as one SetState frame. The whole set must fit in 64 MiB (about 5 min 49 s
+  mono or 2 min 54 s stereo across all slots). A larger set is refused in the app with the sizes shown.
+  This is a wire protocol constant. `docs/CONTRACT.md` was not changed.
+  Docs: `docs/SAMPLE_INTERFACE.md` is now draft v0.2 (16-byte header, u32 sample rate, u32 slot count,
+  then per slot u8 slot, u8 root note, u8 channels, u8 name length, u32 frame count, name, and float32
+  interleaved samples). The `state=` line in `playback.txt` still works and is labelled STOPGAP in the
+  file template. Existing files are not rewritten.
+  Found while building (recorded in `docs/SAMPLE_INTERFACE.md`): JUCE's VST3 host side drops any
+  `setStateInformation` bytes that are not its own XML wrapper, with no error. So a raw blob does not
+  reach Akazi XL today, and the plugin cannot answer through that call. Until the Akazi XL side is
+  agreed, an empty StateResult means the host accepted the blob, not that Akazi XL loaded it.
+  Hardening: two independent Opus reviews ran before the PR (codec, import and library; then the app
+  send path). They found no memory-safety bug in the codec. Fixed from them: the library could write
+  through a symlinked `index.txt.tmp` or `index.txt.bad`; hand-placed files with names the index cannot
+  hold lost their slot on every restart; the resampler let content next to Nyquist alias at about
+  -11 dB (now about -90 dB); a blob that killed or stalled the host was re-sent on every restart, so
+  the accepted slots never came back (the one blocker); the samples status went stale after a restart; a pipe write had
+  no timeout; a stale StateResult could be taken for the next answer; and smaller items.
+  Tests: ctest goes from 8 entries to 13, all passing. New: `phylo_sample_blob`
+  (36 tests), `phylo_sample_import` (40 tests), `phylo_sample_library` (40 tests), `phylo_sample_session`,
+  and `phylo_sample_send` (528 checks; runs against the stand-in host `phylo_fake_samplehost` and the
+  real `phylo-plughost`). The core suite is unchanged at 80 checks. ThreadSanitizer: send check and
+  renderer check clean. ASan and UBSan: the three core sample suites clean. CI runs all 13 on Ubuntu, macOS and Windows; results are on the pull request.
+  Known limits, not fixed here: import and blob build run on the message thread (about 0.4 s for a 59 s
+  stereo 44.1 kHz file; about 0.15 s to build a 61 MiB set). Sending a 64 MiB set drops about six audio
+  blocks (64 ms of silence), and a dropped block's MIDI is lost (existing behaviour, handoff 8.4 area).
+  The library reads every sample fully on open. About 128 MiB is held for a full set (wanted and
+  accepted copies).
+  Not verified: anything audible (no person has run it with audio and MIDI out), a real Akazi XL plugin
+  loaded in the host with a sample blob, and the Windows pipe-write watchdog beyond CI.
+- 2026-10-10: Open decisions for Thomas after 8.1: (1) root note per slot, one byte per slot, default
+  60 (middle C), constant `kDefaultRootNote`. (2) Memory budget: 60 s per sample (`kMaxSampleSeconds`)
+  and a 64 MiB set (`kMaxBlobBytes`, tied to `kMaxPayloadBytes`); needs a check in Akazi XL. (3)
+  StateResult reporting the loaded slots: not in v1, as proposed. (4) How a valid blob is delivered to
+  the plugin, and how the plugin reports its own refusal (see "Found while building").
+- 2026-10-11: Thomas decided the three open questions of 8.1 ("yes to all three"). (1) Root note per
+  slot: one byte per slot, default 60 (middle C), `kDefaultRootNote`. (2) Budget: 60 s per sample
+  (`kMaxSampleSeconds`) and 64 MiB for the whole set (`kMaxBlobBytes`, tied to `kMaxPayloadBytes`).
+  (3) StateResult does not report the loaded slots in v1; deferred to v2 with the per-slot message.
+  No code or format change follows: these were already the built defaults. The comments in
+  `SampleBlob.h`, `docs/SAMPLE_INTERFACE.md` ("Decisions") and `docs/HANDOFF.md` now say decided.
+  Thomas also approved the Akazi XL change list (handoff 8.7): Akazi XL reads the blob and reports its
+  own refusal, and the delivery path is fixed and agreed on both sides. That work is on its own
+  branches and pull requests. PR #27 is not merged; merging needs Thomas's "Merge". The audible check
+  is planned for 2026-10-12.

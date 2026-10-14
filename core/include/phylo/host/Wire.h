@@ -15,7 +15,9 @@ namespace phylo::host
 {
 
 constexpr std::uint32_t kProtocolVersion = 1;
-constexpr std::uint32_t kMaxPayloadBytes = 16u * 1024u * 1024u;
+// 64 MiB. Raised from 16 MiB for the sample library: the slot set travels as one SetState
+// payload, and a single 60 s stereo sample at 48 kHz float is about 23 MB.
+constexpr std::uint32_t kMaxPayloadBytes = 64u * 1024u * 1024u;
 
 enum class MsgType : std::uint8_t
 {

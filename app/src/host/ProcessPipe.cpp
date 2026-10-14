@@ -4,6 +4,8 @@
 #include <thread>
 
 #if defined(_WIN32)
+#include <condition_variable>
+#include <mutex>
 namespace
 {
 std::wstring toWide(const std::string& s)
@@ -49,7 +51,7 @@ bool ProcessPipe::start(const std::string& exe, const std::vector<std::string>& 
 
     HANDLE childIn = nullptr, childOutWrite = nullptr;
     HANDLE parentIn = nullptr, parentOut = nullptr;
-    if (!CreatePipe(&childIn, &parentIn, &sa, 0) || !CreatePipe(&parentOut, &childOutWrite, &sa, 0))
+    if (!CreatePipe(&childIn, &parentIn, &sa, 64 * 1024) || !CreatePipe(&parentOut, &childOutWrite, &sa, 0))
         return false;
     // Our ends must not be inherited by the child.
     SetHandleInformation(parentIn, HANDLE_FLAG_INHERIT, 0);
@@ -89,18 +91,64 @@ bool ProcessPipe::start(const std::string& exe, const std::vector<std::string>& 
 
 bool ProcessPipe::writeAll(const std::uint8_t* data, std::size_t size)
 {
+    return writeAllWithTimeout(data, size, -1);
+}
+
+bool ProcessPipe::writeAllWithTimeout(const std::uint8_t* data, std::size_t size, int timeoutMs)
+{
     if (!running_)
         return false;
+
+    // The watchdog is only armed for big writes: small ones fit the pipe buffer, and Process
+    // frames are written at audio rate. It holds the process handle itself, which stays valid
+    // until this call returns (kill() runs on the same thread), and it is joined below, so it
+    // can never act on a later child.
+    std::mutex m;
+    std::condition_variable cv;
+    bool finished = false;
+    bool fired = false;
+    std::thread watchdog;
+    if (timeoutMs >= 0 && size > kWatchdogBytes)
+    {
+        const HANDLE victim = process_;
+        watchdog = std::thread(
+            [&m, &cv, &finished, &fired, victim, timeoutMs]
+            {
+                std::unique_lock<std::mutex> lock(m);
+                if (!cv.wait_for(lock, std::chrono::milliseconds(timeoutMs), [&finished] { return finished; }))
+                {
+                    fired = true;
+                    TerminateProcess(victim, 1); // makes the blocked WriteFile fail
+                }
+            });
+    }
+
+    bool ok = true;
     std::size_t done = 0;
     while (done < size)
     {
         DWORD written = 0;
         const DWORD chunk = static_cast<DWORD>(size - done > 65536 ? 65536 : size - done);
         if (!WriteFile(toChild_, data + done, chunk, &written, nullptr) || written == 0)
-            return false;
+        {
+            ok = false;
+            break;
+        }
         done += written;
     }
-    return true;
+
+    if (watchdog.joinable())
+    {
+        {
+            std::lock_guard<std::mutex> lock(m);
+            finished = true;
+        }
+        cv.notify_all();
+        watchdog.join();
+        if (fired)
+            ok = false;
+    }
+    return ok;
 }
 
 long ProcessPipe::readWithTimeout(std::uint8_t* buffer, std::size_t size, int timeoutMs)
@@ -221,6 +269,10 @@ bool ProcessPipe::start(const std::string& exe, const std::vector<std::string>& 
     close(out[1]);
     toChild_ = in[1];
     fromChild_ = out[0];
+    // Non-blocking, so a write to a child that has stopped reading can time out.
+    const int flags = fcntl(toChild_, F_GETFL, 0);
+    if (flags >= 0)
+        fcntl(toChild_, F_SETFL, flags | O_NONBLOCK);
     pid_ = pid;
     running_ = true;
     return true;
@@ -228,19 +280,47 @@ bool ProcessPipe::start(const std::string& exe, const std::vector<std::string>& 
 
 bool ProcessPipe::writeAll(const std::uint8_t* data, std::size_t size)
 {
+    return writeAllWithTimeout(data, size, -1);
+}
+
+bool ProcessPipe::writeAllWithTimeout(const std::uint8_t* data, std::size_t size, int timeoutMs)
+{
     if (!running_)
         return false;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs < 0 ? 0 : timeoutMs);
     std::size_t done = 0;
     while (done < size)
     {
         const ssize_t n = write(toChild_, data + done, size - done);
-        if (n < 0)
+        if (n >= 0)
         {
-            if (errno == EINTR)
-                continue;
-            return false;
+            done += static_cast<std::size_t>(n);
+            continue;
         }
-        done += static_cast<std::size_t>(n);
+        if (errno == EINTR)
+            continue;
+        if (errno != EAGAIN && errno != EWOULDBLOCK)
+            return false; // for example EPIPE: the child has gone
+
+        // The pipe is full. Wait until the child reads some, or the deadline passes.
+        int waitMs = -1;
+        if (timeoutMs >= 0)
+        {
+            const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                  deadline - std::chrono::steady_clock::now())
+                                  .count();
+            if (left <= 0)
+                return false;
+            waitMs = static_cast<int>(left);
+        }
+        pollfd pfd{};
+        pfd.fd = toChild_;
+        pfd.events = POLLOUT;
+        const int r = poll(&pfd, 1, waitMs);
+        if (r < 0 && errno != EINTR)
+            return false;
+        if (r == 0)
+            return false; // timed out
     }
     return true;
 }
